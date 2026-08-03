@@ -1225,6 +1225,82 @@ class TushareFetcher(BaseFetcher):
             logger.warning(f"[Tushare] 获取筹码分布失败 {stock_code}: {e}")
             return None
 
+    def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """个股主力资金流向(Tushare moneyflow)。
+
+        返回与 AkshareFundamentalAdapter.get_capital_flow 兼容的结构,供 base.py
+        「Tushare 优先 / akshare 兜底」链使用。积分要求 2000(用户 5000 已覆盖)。
+        Tushare moneyflow 仅提供当日数据,5日/10日累计留空,由 akshare 兜底补充。
+        """
+        if _is_us_code(stock_code) or _is_etf_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            start_date = self.get_trade_time(early_time='00:00', late_time='19:00')
+            if not start_date:
+                return None
+            ts_code = self._convert_stock_code(stock_code)
+            df = self._call_api_with_rate_limit(
+                "moneyflow", ts_code=ts_code, start_date=start_date, end_date=start_date,
+            )
+            if df is None or df.empty:
+                return None
+            row = df.iloc[0]
+            try:
+                net_mf = float(row.get("net_mf_amount"))
+            except (TypeError, ValueError):
+                return None
+            if pd.isna(net_mf):
+                return None
+            return {
+                "status": "ok",
+                "stock_flow": {
+                    "main_net_inflow": net_mf,
+                    "inflow_5d": None,
+                    "inflow_10d": None,
+                },
+                "sector_rankings": {"top": [], "bottom": []},
+                "source_chain": ["capital_flow:tushare_moneyflow"],
+                "errors": [],
+            }
+        except Exception as e:
+            logger.warning(f"[Tushare] moneyflow 失败 {stock_code}: {e}")
+            return None
+
+    def get_dragon_tiger_flag(self, stock_code: str, lookback_days: int = 20) -> Optional[Dict[str, Any]]:
+        """龙虎榜(Tushare top_list 当日反查)。
+
+        返回与 AkshareFundamentalAdapter.get_dragon_tiger_flag 兼容的结构。
+        积分要求 5000。查最近一个交易日的 top_list 是否含该 ts_code。
+        """
+        if _is_us_code(stock_code) or _is_etf_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            ts_code = self._convert_stock_code(stock_code)
+            trade_date = self.get_trade_time(early_time='00:00', late_time='19:00')
+            if not trade_date:
+                return None
+            df = self._call_api_with_rate_limit("top_list", trade_date=trade_date)
+            on_list = False
+            if df is not None and not df.empty and "ts_code" in df.columns:
+                on_list = (df["ts_code"].astype(str) == ts_code).any()
+            latest_date = None
+            if on_list:
+                try:
+                    latest_date = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
+                except ValueError:
+                    latest_date = trade_date
+            return {
+                "status": "ok",
+                "is_on_list": bool(on_list),
+                "recent_count": 1 if on_list else 0,
+                "latest_date": latest_date,
+                "source_chain": ["dragon_tiger:tushare_top_list"],
+                "errors": [],
+            }
+        except Exception as e:
+            logger.warning(f"[Tushare] top_list 失败 {stock_code}: {e}")
+            return None
+
     def compute_cyq_metrics(self, df: pd.DataFrame, current_price: float) -> dict:
         """
         基于 Tushare 的筹码分布明细表 (cyq_chips) 计算常用筹码指标  

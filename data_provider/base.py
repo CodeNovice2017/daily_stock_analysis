@@ -3438,11 +3438,26 @@ class DataFetcherManager:
                 [{"provider": "fundamental_pipeline", "result": "failed", "duration_ms": 0}],
                 ["fundamental stage timeout"],
             )
-        payload, err, cost_ms = self._run_with_retry(
-            lambda: self._fundamental_adapter.get_capital_flow(stock_code),
-            timeout,
-            "capital_flow",
+        payload, err, cost_ms = None, None, 0
+        # 优先 Tushare moneyflow(稳定 API),失败回退 akshare 爬虫
+        _tushare = next(
+            (f for f in self._get_fetchers_snapshot() if getattr(f, "name", "") == "TushareFetcher"),
+            None,
         )
+        if _tushare is not None and hasattr(_tushare, "get_capital_flow"):
+            _ts_payload, _ts_err, _ts_cost = self._run_with_retry(
+                lambda: _tushare.get_capital_flow(stock_code),
+                timeout,
+                "capital_flow_tushare",
+            )
+            if isinstance(_ts_payload, dict) and _ts_payload.get("stock_flow", {}).get("main_net_inflow") is not None:
+                payload, cost_ms = _ts_payload, _ts_cost
+        if payload is None:
+            payload, err, cost_ms = self._run_with_retry(
+                lambda: self._fundamental_adapter.get_capital_flow(stock_code),
+                timeout,
+                "capital_flow",
+            )
         if not isinstance(payload, dict):
             return self._build_fundamental_block(
                 "failed",
@@ -3502,11 +3517,26 @@ class DataFetcherManager:
                 [{"provider": "fundamental_pipeline", "result": "failed", "duration_ms": 0}],
                 ["fundamental stage timeout"],
             )
-        payload, err, cost_ms = self._run_with_retry(
-            lambda: self._fundamental_adapter.get_dragon_tiger_flag(stock_code),
-            timeout,
-            "dragon_tiger",
+        payload, err, cost_ms = None, None, 0
+        # 优先 Tushare top_list(稳定 API),失败回退 akshare 爬虫
+        _tushare = next(
+            (f for f in self._get_fetchers_snapshot() if getattr(f, "name", "") == "TushareFetcher"),
+            None,
         )
+        if _tushare is not None and hasattr(_tushare, "get_dragon_tiger_flag"):
+            _ts_payload, _ts_err, _ts_cost = self._run_with_retry(
+                lambda: _tushare.get_dragon_tiger_flag(stock_code),
+                timeout,
+                "dragon_tiger_tushare",
+            )
+            if isinstance(_ts_payload, dict) and _ts_payload.get("status") == "ok":
+                payload, cost_ms = _ts_payload, _ts_cost
+        if payload is None:
+            payload, err, cost_ms = self._run_with_retry(
+                lambda: self._fundamental_adapter.get_dragon_tiger_flag(stock_code),
+                timeout,
+                "dragon_tiger",
+            )
         if not isinstance(payload, dict):
             return self._build_fundamental_block(
                 "failed",

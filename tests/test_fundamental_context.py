@@ -512,6 +512,10 @@ class TestFundamentalContext(unittest.TestCase):
                         "source_chain": [],
                         "errors": [],
                     },
+                ), \
+                patch(
+                    "data_provider.tushare_fetcher.TushareFetcher.get_capital_flow",
+                    return_value=None,
                 ):
             ctx = manager.get_capital_flow_context("600519", budget_seconds=0.5)
         self.assertEqual(ctx["status"], "not_supported")

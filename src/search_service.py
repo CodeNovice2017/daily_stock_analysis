@@ -2220,6 +2220,69 @@ class SearXNGSearchProvider(BaseSearchProvider):
         )
 
 
+class TushareNewsProvider(BaseSearchProvider):
+    """Tushare major_news 长篇财经通讯(专业财经源)。
+
+    复用 TUSHARE_TOKEN(5000 积分已有权限),不新增 env。
+    major_news 覆盖新华网/财联社/同花顺/新浪等 9 源、8 年历史,作为 Anspire/Bocha 的专业替代。
+    注意:major_news 不支持按个股/全文检索,只能按时间窗拉全量后用标题关键词过滤。
+    """
+
+    def __init__(self, api_keys: List[str]):
+        super().__init__(api_keys or [""], "TushareNews")
+
+    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
+        import re
+        import time
+        from datetime import datetime, timedelta
+
+        start_ts = time.time()
+        try:
+            import tushare as ts
+        except ImportError:
+            return SearchResponse(query, [], self.name, False, "tushare 未安装", 0.0)
+        try:
+            pro = ts.pro_api(api_key)
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=days)
+            df = pro.major_news(
+                start_date=start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                end_date=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                fields=["title", "content", "pub_time", "src"],
+            )
+            if df is None or df.empty:
+                return SearchResponse(query, [], self.name, True, "", time.time() - start_ts)
+            # major_news 无关键词参数,按标题过滤(完整 query → 拆词任一命中)
+            kw = (query or "").strip()
+            if kw:
+                try:
+                    mask = df["title"].astype(str).str.contains(re.escape(kw), na=False, regex=False)
+                    if not mask.any():
+                        tokens = [t for t in re.split(r"[\s,，]+", kw) if len(t) >= 2]
+                        if tokens:
+                            pattern = "|".join(re.escape(t) for t in tokens)
+                            mask = df["title"].astype(str).str.contains(pattern, na=False, regex=True)
+                    df = df[mask]
+                except Exception:
+                    pass
+            if "pub_time" in df.columns:
+                df = df.sort_values(by="pub_time", ascending=False)
+            df = df.head(max_results)
+            results: List[SearchResult] = []
+            for _, row in df.iterrows():
+                content = str(row.get("content") or "")
+                results.append(SearchResult(
+                    title=str(row.get("title") or "")[:200],
+                    snippet=content[:500],
+                    url="",
+                    source=str(row.get("src") or "Tushare"),
+                    published_date=str(row.get("pub_time") or "")[:19],
+                ))
+            return SearchResponse(query, results, self.name, True, "", time.time() - start_ts)
+        except Exception as exc:
+            return SearchResponse(query, [], self.name, False, f"{type(exc).__name__}: {exc}", time.time() - start_ts)
+
+
 class SearchService:
     """
     搜索服务
@@ -2385,6 +2448,7 @@ class SearchService:
         bocha_keys: Optional[List[str]] = None,
         tavily_keys: Optional[List[str]] = None,
         anspire_keys: Optional[List[str]] = None,
+        tushare_token: Optional[str] = None,
         brave_keys: Optional[List[str]] = None,
         serpapi_keys: Optional[List[str]] = None,
         minimax_keys: Optional[List[str]] = None,
@@ -2480,6 +2544,11 @@ class SearchService:
         if anspire_keys:
             self._providers.insert(0, AnspireSearchProvider(anspire_keys))
             logger.info(f"已配置 Anspire Search 搜索，共 {len(anspire_keys)} 个 API Key")
+
+        # 8. Tushare major_news（专业财经源，复用 TUSHARE_TOKEN，5000 积分）
+        if tushare_token:
+            self._providers.insert(0, TushareNewsProvider([tushare_token]))
+            logger.info("已配置 TushareNews(major_news 专业财经源)")
             
         if not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
@@ -4885,6 +4954,7 @@ def get_search_service() -> SearchService:
                     bocha_keys=config.bocha_api_keys,
                     tavily_keys=config.tavily_api_keys,
                     anspire_keys=config.anspire_api_keys,
+                    tushare_token=getattr(config, "tushare_token", None),
                     brave_keys=config.brave_api_keys,
                     serpapi_keys=config.serpapi_keys,
                     minimax_keys=config.minimax_api_keys,

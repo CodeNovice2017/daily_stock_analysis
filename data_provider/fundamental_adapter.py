@@ -274,12 +274,26 @@ class AkshareFundamentalAdapter:
         except Exception as exc:
             return None, None, [f"import_akshare:{type(exc).__name__}"]
 
+        # 超时护栏:akshare 内部 requests 无原生超时,卡死时会阻塞线程数十秒。
+        # 复用 akshare_fetcher._akshare_call_with_timeout(spawn 子进程 + 超时 kill)。
+        # 护栏 15s 是"资源清理"语义(确保子进程最终被回收不泄漏),
+        # 用户等待由外层 stage_timeout 控制,两者不冲突。
+        try:
+            from .akshare_fetcher import _akshare_call_with_timeout
+        except Exception:
+            _akshare_call_with_timeout = None
+
         for func_name, kwargs in candidates:
             fn = getattr(ak, func_name, None)
             if fn is None:
                 continue
             try:
-                df = fn(**kwargs)
+                if _akshare_call_with_timeout is not None:
+                    df = _akshare_call_with_timeout(
+                        fn, timeout=15.0, call_name=func_name, **kwargs
+                    )
+                else:
+                    df = fn(**kwargs)
                 if isinstance(df, pd.Series):
                     df = df.to_frame().T
                 if isinstance(df, pd.DataFrame) and not df.empty:
