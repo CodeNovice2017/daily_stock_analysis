@@ -1719,7 +1719,28 @@ class DataFetcherManager:
         stale_seconds = max(0, int((fetched_dt - provider_dt).total_seconds()))
         ttl = realtime_cache_ttl if realtime_cache_ttl is not None else 600
         setattr(quote, "stale_seconds", stale_seconds)
-        setattr(quote, "is_stale", stale_seconds > int(ttl))
+        # [personal patch] 动态 stale:盘中严格 TTL(检测数据源延迟/故障),
+        # 盘后/盘前不标 stale(收盘价是最新有效数据,非"过期")
+        from datetime import timedelta
+        _cn_tz = timezone(timedelta(hours=8))
+        _fetched = fetched_dt.astimezone(_cn_tz) if getattr(fetched_dt, 'tzinfo', None) else fetched_dt.replace(tzinfo=timezone.utc).astimezone(_cn_tz)
+        _cn_min = _fetched.hour * 60 + _fetched.minute
+        _in_trading = _fetched.weekday() < 5 and 570 <= _cn_min < 900
+        setattr(quote, "is_stale", stale_seconds > int(ttl) and _in_trading)
+        # [personal patch] TickFlow 等数据源不提供 PE/PB,从 Tushare daily_basic 补充
+        if getattr(quote, "pe_ratio", None) is None or getattr(quote, "pb_ratio", None) is None:
+            _by_name = getattr(self, "_fetchers_by_name", None)
+            if _by_name:
+                _ts = _by_name.get("TushareFetcher")
+                if _ts is not None:
+                    _val = _ts.get_daily_basic_valuation(getattr(quote, "code", ""))
+                    if _val:
+                        if getattr(quote, "pe_ratio", None) is None:
+                            setattr(quote, "pe_ratio", _val.get("pe"))
+                        if getattr(quote, "pb_ratio", None) is None:
+                            setattr(quote, "pb_ratio", _val.get("pb"))
+                        if getattr(quote, "total_mv", None) is None:
+                            setattr(quote, "total_mv", _val.get("total_mv"))
         return quote
     
     def get_realtime_quote(self, stock_code: str, *, log_final_failure: bool = True):

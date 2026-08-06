@@ -1107,6 +1107,21 @@ class StockAnalysisPipeline:
             )
         )
 
+        # [personal patch] Tushare Pro 补充:业绩预告 + 财务指标 + 融资融券
+        _ts = getattr(self.fetcher_manager, "_fetchers_by_name", {}).get("TushareFetcher")
+        if _ts is not None:
+            _code = context.get("code", "")
+            if _code:
+                _forecast = _ts.get_forecast(_code)
+                _fina = _ts.get_fina_indicator(_code)
+                _margin = _ts.get_margin_detail(_code)
+                if _forecast:
+                    enhanced["forecast"] = _forecast
+                if _fina:
+                    enhanced["fina_indicator"] = _fina
+                if _margin:
+                    enhanced["margin_detail"] = _margin
+
         return enhanced
 
     def _attach_belong_boards_to_fundamental_context(
@@ -1398,6 +1413,32 @@ class StockAnalysisPipeline:
                     else persisted_intelligence_context
                 )
                 logger.info(f"[{code}] Agent mode: local intelligence evidence injected into news_context")
+
+            # [personal patch] Tushare Pro 补充数据注入 news_context:业绩预告 + 财务指标 + 融资融券
+            _ts_fetcher = getattr(self.fetcher_manager, "_fetchers_by_name", {}).get("TushareFetcher")
+            if _ts_fetcher is not None:
+                _supplements = []
+                _fc = _ts_fetcher.get_forecast(code)
+                if _fc:
+                    _supplements.append(f"【业绩预告】{_fc.get('report_period','')} 类型:{_fc.get('type','')} 增幅:{_fc.get('p_change_min','?')}%~{_fc.get('p_change_max','?')}% 净利:{_fc.get('net_profit_min','?')}~{_fc.get('net_profit_max','?')}万元 {_fc.get('summary','')}")
+                _fi = _ts_fetcher.get_fina_indicator(code)
+                if _fi:
+                    _l = _fi.get("latest",{})
+                    _supplements.append(f"【财务指标】最新季度({_l.get('period','')}) ROE:{_l.get('roe','?')}% 净利率:{_l.get('net_margin','?')}% 资产负债率:{_l.get('debt_ratio','?')}% ROE趋势:{_fi.get('roe_trend','?')}")
+                _mg = _ts_fetcher.get_margin_detail(code)
+                if _mg:
+                    _chg = _mg.get("rzye_change_5d")
+                    _chg_str = f"{_chg/1e4:+.0f}万" if _chg else "N/A"
+                    _supplements.append(f"【融资融券】融资余额:{(_mg.get('rzye') or 0)/1e4:.0f}万 融券余额:{(_mg.get('rqye') or 0)/1e4:.0f}万 5日融资变化:{_chg_str}")
+                if _supplements:
+                    _text = "\n".join(_supplements)
+                    existing = initial_context.get("news_context")
+                    initial_context["news_context"] = (
+                        f"{existing}\n\n[Tushare Pro 补充数据]\n{_text}"
+                        if existing
+                        else f"[Tushare Pro 补充数据]\n{_text}"
+                    )
+                    logger.info(f"[{code}] Agent mode: Tushare Pro supplemental data injected into news_context")
 
             # Issue #1066: ensure deep history is in DB before agent tools run
             self._ensure_agent_history(code)

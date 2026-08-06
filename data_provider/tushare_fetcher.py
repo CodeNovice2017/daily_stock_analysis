@@ -1225,6 +1225,135 @@ class TushareFetcher(BaseFetcher):
             logger.warning(f"[Tushare] 获取筹码分布失败 {stock_code}: {e}")
             return None
 
+    def get_forecast(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """业绩预告(forecast):预告类型/增幅区间/净利区间。5000 积分。"""
+        if _is_us_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            from .realtime_types import safe_float
+            ts_code = self._convert_stock_code(stock_code)
+            df = self._call_api_with_rate_limit(
+                "forecast", ts_code=ts_code,
+                fields="ts_code,ann_date,end_date,type,p_change_min,p_change_max,net_profit_min,net_profit_max,summary",
+            )
+            if df is None or df.empty:
+                return None
+            latest = df.sort_values("ann_date", ascending=False).iloc[0]
+            return {
+                "report_period": str(latest.get("end_date", "")),
+                "type": str(latest.get("type", "")),
+                "p_change_min": safe_float(latest.get("p_change_min")),
+                "p_change_max": safe_float(latest.get("p_change_max")),
+                "net_profit_min": safe_float(latest.get("net_profit_min")),
+                "net_profit_max": safe_float(latest.get("net_profit_max")),
+                "summary": str(latest.get("summary", "")),
+            }
+        except Exception as e:
+            logger.debug(f"Tushare forecast 失败 {stock_code}: {e}")
+            return None
+
+    def get_fina_indicator(self, stock_code: str, n: int = 4) -> Optional[Dict[str, Any]]:
+        """财务指标(fina_indicator):ROE/毛利率/净利率 最近 n 个季度。5000 积分。"""
+        if _is_us_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            from .realtime_types import safe_float
+            ts_code = self._convert_stock_code(stock_code)
+            df = self._call_api_with_rate_limit(
+                "fina_indicator", ts_code=ts_code,
+                fields="ts_code,ann_date,end_date,roe,roa,grossprofit_margin,netprofit_margin,debt_to_assets",
+            )
+            if df is None or df.empty:
+                return None
+            recent = df.sort_values("end_date", ascending=False).head(n)
+            quarters = []
+            for _, row in recent.iterrows():
+                quarters.append({
+                    "period": str(row.get("end_date", "")),
+                    "roe": safe_float(row.get("roe")),
+                    "gross_margin": safe_float(row.get("grossprofit_margin")),
+                    "net_margin": safe_float(row.get("netprofit_margin")),
+                    "debt_ratio": safe_float(row.get("debt_to_assets")),
+                })
+            latest = quarters[0] if quarters else {}
+            prev = quarters[1] if len(quarters) > 1 else {}
+            roe_now = latest.get("roe")
+            roe_prev = prev.get("roe")
+            return {
+                "latest": latest,
+                "trend": quarters,
+                "roe": roe_now,
+                "roe_trend": "up" if roe_now and roe_prev and roe_now > roe_prev else ("down" if roe_now and roe_prev and roe_now < roe_prev else "stable"),
+            }
+        except Exception as e:
+            logger.debug(f"Tushare fina_indicator 失败 {stock_code}: {e}")
+            return None
+
+    def get_margin_detail(self, stock_code: str, n: int = 5) -> Optional[Dict[str, Any]]:
+        """融资融券(margin_detail):融资余额/融券余额/5日变化。5000 积分。"""
+        if _is_us_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            from .realtime_types import safe_float
+            ts_code = self._convert_stock_code(stock_code)
+            today = self.get_trade_time(early_time='00:00', late_time='19:00')
+            if not today:
+                return None
+            from datetime import datetime, timedelta
+            end_dt = datetime.strptime(today, '%Y%m%d')
+            start = (end_dt - timedelta(days=25)).strftime('%Y%m%d')
+            df = self._call_api_with_rate_limit(
+                "margin_detail", ts_code=ts_code, start_date=start, end_date=today,
+            )
+            if df is None or df.empty:
+                return None
+            df_sorted = df.sort_values("trade_date", ascending=False)
+            latest = df_sorted.iloc[0]
+            rzye = safe_float(latest.get("rzye"))
+            rqye = safe_float(latest.get("rqye"))
+            rzye_change = None
+            if len(df_sorted) >= n:
+                old = safe_float(df_sorted.iloc[min(n - 1, len(df_sorted) - 1)].get("rzye"))
+                if rzye is not None and old is not None:
+                    rzye_change = rzye - old
+            return {
+                "rzye": rzye,
+                "rqye": rqye,
+                "rzmre": safe_float(latest.get("rzmre")),
+                "rzye_change_5d": rzye_change,
+                "trade_date": str(latest.get("trade_date", "")),
+            }
+        except Exception as e:
+            logger.debug(f"Tushare margin_detail 失败 {stock_code}: {e}")
+            return None
+
+    def get_daily_basic_valuation(self, stock_code: str) -> Optional[Dict[str, float]]:
+        """从 daily_basic 获取最新 PE/PB/市值(5000 积分,毫秒级响应)。
+
+        用于补充 TickFlow 等不提供估值字段的实时行情数据源。
+        """
+        from .realtime_types import safe_float
+        if _is_us_code(stock_code) or _is_etf_code(stock_code) or _is_hk_market(stock_code):
+            return None
+        try:
+            ts_code = self._convert_stock_code(stock_code)
+            df = self._call_api_with_rate_limit(
+                "daily_basic", ts_code=ts_code,
+                fields="ts_code,trade_date,pe,pb,total_mv,circ_mv",
+            )
+            if df is None or df.empty:
+                return None
+            row = df.iloc[0]
+            return {
+                "pe": safe_float(row.get("pe")),
+                "pb": safe_float(row.get("pb")),
+                "total_mv": safe_float(row.get("total_mv")),
+                "circ_mv": safe_float(row.get("circ_mv")),
+            }
+        except Exception as e:
+            logger.debug(f"Tushare daily_basic 失败 {stock_code}: {e}")
+            return None
+
     def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """个股主力资金流向(Tushare moneyflow)。
 
@@ -1235,28 +1364,32 @@ class TushareFetcher(BaseFetcher):
         if _is_us_code(stock_code) or _is_etf_code(stock_code) or _is_hk_market(stock_code):
             return None
         try:
-            start_date = self.get_trade_time(early_time='00:00', late_time='19:00')
-            if not start_date:
+            today = self.get_trade_time(early_time='00:00', late_time='19:00')
+            if not today:
                 return None
             ts_code = self._convert_stock_code(stock_code)
+            # [personal patch] 查 21 天(日历日 ≈ 15 交易日)计算 5日/10日累计
+            from datetime import datetime, timedelta
+            end_dt = datetime.strptime(today, '%Y%m%d')
+            lookback = (end_dt - timedelta(days=21)).strftime('%Y%m%d')
             df = self._call_api_with_rate_limit(
-                "moneyflow", ts_code=ts_code, start_date=start_date, end_date=start_date,
+                "moneyflow", ts_code=ts_code, start_date=lookback, end_date=today,
             )
             if df is None or df.empty:
                 return None
-            row = df.iloc[0]
-            try:
-                net_mf = float(row.get("net_mf_amount"))
-            except (TypeError, ValueError):
+            if "net_mf_amount" not in df.columns:
                 return None
-            if pd.isna(net_mf):
-                return None
+            df["net_mf_amount"] = pd.to_numeric(df["net_mf_amount"], errors="coerce").fillna(0)
+            df_sorted = df.sort_values("trade_date", ascending=False)
+            net_mf = float(df_sorted.iloc[0]["net_mf_amount"])
+            inflow_5d = float(df_sorted.head(5)["net_mf_amount"].sum())
+            inflow_10d = float(df_sorted.head(10)["net_mf_amount"].sum())
             return {
                 "status": "ok",
                 "stock_flow": {
                     "main_net_inflow": net_mf,
-                    "inflow_5d": None,
-                    "inflow_10d": None,
+                    "inflow_5d": inflow_5d,
+                    "inflow_10d": inflow_10d,
                 },
                 "sector_rankings": {"top": [], "bottom": []},
                 "source_chain": ["capital_flow:tushare_moneyflow"],

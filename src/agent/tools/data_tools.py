@@ -728,3 +728,89 @@ get_capital_flow_tool = ToolDefinition(
 
 
 ALL_DATA_TOOLS.append(get_capital_flow_tool)
+
+
+# ============================================================
+# get_forecast (personal patch: Tushare Pro 业绩预告)
+# ============================================================
+
+def _handle_get_forecast(stock_code: str) -> dict:
+    """Get latest earnings forecast (业绩预告)."""
+    manager = _get_fetcher_manager()
+    ts = getattr(manager, "_fetchers_by_name", {}).get("TushareFetcher")
+    if ts is None:
+        return {"error": "Tushare not configured", "retriable": False}
+    try:
+        result = ts.get_forecast(stock_code)
+    except Exception as exc:
+        return {"stock_code": stock_code, "status": "error", "error": str(exc)[:100]}
+    if result is None:
+        return {"stock_code": stock_code, "status": "no_data",
+                "note": "No forecast available or non-A-share stock"}
+    return {"stock_code": stock_code, "status": "ok", **result}
+
+
+get_forecast_tool = ToolDefinition(
+    name="get_forecast",
+    description="Get latest earnings forecast (业绩预告): type(预增/预减/扭亏), "
+                "p_change_min/max (净利润增幅区间), net_profit range. "
+                "Key fundamental catalyst signal for A-shares.",
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="Stock code, e.g., '000783'",
+        ),
+    ],
+    handler=_handle_get_forecast,
+    category="data",
+    policy=_MARKET_DATA_STOCK_POLICY,
+)
+
+ALL_DATA_TOOLS.append(get_forecast_tool)
+
+
+# ============================================================
+# get_fina_indicator (personal patch: Tushare Pro 财务指标)
+# ============================================================
+
+def _handle_get_fina_indicator(stock_code: str) -> dict:
+    """Get financial indicators (ROE/毛利率/净利率趋势)."""
+    manager = _get_fetcher_manager()
+    ts = getattr(manager, "_fetchers_by_name", {}).get("TushareFetcher")
+    if ts is None:
+        return {"error": "Tushare not configured", "retriable": False}
+    try:
+        result = ts.get_fina_indicator(stock_code)
+    except Exception as exc:
+        return {"stock_code": stock_code, "status": "error", "error": str(exc)[:100]}
+    if result is None:
+        return {"stock_code": stock_code, "status": "no_data",
+                "note": "No financial indicators available"}
+    return {
+        "stock_code": stock_code,
+        "status": "ok",
+        "latest": result.get("latest", {}),
+        "roe": result.get("roe"),
+        "roe_trend": result.get("roe_trend"),
+    }
+
+
+get_fina_indicator_tool = ToolDefinition(
+    name="get_fina_indicator",
+    description="Get financial indicators (财务指标): ROE, gross margin, net margin, "
+                "debt ratio for latest quarter + ROE trend (up/down/stable). "
+                "Assess earnings quality and profitability sustainability.",
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="Stock code, e.g., '000783'",
+        ),
+    ],
+    handler=_handle_get_fina_indicator,
+    category="data",
+    policy=_MARKET_DATA_STOCK_POLICY,
+)
+
+ALL_DATA_TOOLS.append(get_fina_indicator_tool)

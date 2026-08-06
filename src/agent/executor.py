@@ -78,6 +78,8 @@ LEGACY_DEFAULT_AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{mar
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后执行）
 - `analyze_trend` 获取技术指标
 - `get_chip_distribution` 获取筹码分布
+- `get_forecast` 获取业绩预告（预增/预减+幅度+净利区间）
+- `get_fina_indicator` 获取财务指标（ROE/毛利率/净利率趋势）
 
 **第三阶段 · 情报搜索**（等前两阶段完成后执行）
 - `search_stock_news` 搜索最新资讯、减持、业绩预告等风险信号
@@ -237,6 +239,8 @@ AGENT_SYSTEM_PROMPT = """你是一位{market_role}投资分析 Agent，拥有数
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后执行）
 - `analyze_trend` 获取技术指标
 - `get_chip_distribution` 获取筹码分布
+- `get_forecast` 获取业绩预告（预增/预减+幅度+净利区间）
+- `get_fina_indicator` 获取财务指标（ROE/毛利率/净利率趋势）
 
 **第三阶段 · 情报搜索**（等前两阶段完成后执行）
 - `search_stock_news` 搜索最新资讯、减持、业绩预告等风险信号

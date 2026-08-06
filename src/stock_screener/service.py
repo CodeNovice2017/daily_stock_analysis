@@ -354,26 +354,57 @@ class ScreenerService:
         ]
 
         if qualified:
-            lines.append("## 入围股票")
+            lines.append(f"## 🔥 明日关注(余温合格 {len(qualified)} 只)")
             lines.append("")
-            lines.append(
-                "| 排名 | 代码 | 名称 | 涨停价 | 行业 | "
-                "价格守住 | 新高 | 量能 | 满足 | 评分 |"
-            )
-            lines.append(
-                "| ---: | ---- | ---- | ------: | ---- | "
-                ":---: | :---: | :---: | :---: | ---: |"
-            )
+            lines.append("> 涨停后跟踪期满、余温特征成立,可尝试**次日低吸**;止损纪律严格执行。")
+            lines.append("")
             for idx, r in enumerate(qualified, 1):
-                ph = "Y" if r.cond_price_hold else "N"
-                nh = "Y" if r.cond_new_highs else "N"
-                vl = "Y" if r.cond_volume else "N"
-                met = f"{r.conditions_met}/3" if r.conditions_met else "-"
+                # 解析跟踪期日线,取最新收盘
+                latest_close = r.limit_up_price
+                try:
+                    dd = json.loads(r.day_data_json) if r.day_data_json else []
+                    if dd:
+                        latest_close = float(dd[-1].get("close", r.limit_up_price))
+                except Exception:
+                    dd = []
+                pullback = ((latest_close - r.limit_up_price) / r.limit_up_price * 100) if r.limit_up_price else 0
+                # 买入建议:按回踩程度分类(回踩低吸 vs 已启动回踩关注)
+                if pullback <= 2.0:
+                    # 仍在涨停价附近(回踩/横盘):低吸涨停价带
+                    buy_low = r.limit_up_price * 0.95
+                    buy_high = r.limit_up_price * 1.00
+                    stop = r.limit_up_price * 0.93
+                    action = "回踩低吸"
+                else:
+                    # 已离开涨停价向上:回调到最新价附近关注,不追高
+                    buy_low = latest_close * 0.97
+                    buy_high = latest_close * 1.00
+                    stop = latest_close * 0.93
+                    action = "回踩关注(已启动,勿追高)"
+                # 满足条件列表
+                met_names = []
+                if r.cond_price_hold:
+                    met_names.append("价格守住")
+                if r.cond_new_highs:
+                    met_names.append("新高")
+                if r.cond_volume:
+                    met_names.append("量能")
+                met_str = "、".join(met_names) if met_names else "无"
+                cb = r.consecutive_boards or 1
                 lines.append(
-                    f"| {idx} | {r.code} | {r.name or '-'} | {r.limit_up_price:.2f} | "
-                    f"{r.industry or '-'} | {ph} | {nh} | {vl} | {met} | {r.score:.0f} |"
+                    f"**{idx}. {r.name or r.code}({r.code})** {r.industry or ''} | "
+                    f"评分 {r.score:.0f} | {cb}连板"
                 )
-            lines.append("")
+                lines.append(
+                    f"- 涨停价 {r.limit_up_price:.2f} → 最新 {latest_close:.2f}"
+                    f"(回踩 {pullback:+.1f}%)"
+                )
+                lines.append(f"- ✅ 满足 {r.conditions_met or 0}/3:{met_str}")
+                lines.append(
+                    f"- 🎯 {action} **{buy_low:.2f}-{buy_high:.2f}** | "
+                    f"🛑 止损 **{stop:.2f}**"
+                )
+                lines.append("")
 
         if tracking_active:
             lines.append("## 跟踪中")

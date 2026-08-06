@@ -144,9 +144,10 @@ class IntelligenceService:
             cls._auto_fetch_last_result = None
             cls._auto_fetch_condition.notify_all()
 
-    def create_source(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def create_source(self, payload: Dict[str, Any], *, skip_validation: bool = False) -> Dict[str, Any]:
         fields = self._normalize_source_fields(payload)
-        self._validate_url(fields["url"])
+        if not skip_validation:
+            self._validate_url(fields["url"])
         try:
             return self._source_to_dict(self.repo.create_source(fields))
         except IntegrityError as exc:
@@ -218,7 +219,11 @@ class IntelligenceService:
                     continue
                 payload = {key: value for key, value in template.items() if key != "template_id"}
                 payload["enabled"] = True
-                self.create_source(payload)
+                # [personal patch] 内置默认源可选跳过 SSRF 校验:
+                # fake-ip(DNS 返回 198.18.0.x)/DNS 拦截/企业内网环境下内置源会被误杀,
+                # 内置源域名硬编码可信,设 NEWS_INTEL_VALIDATE_BUILTIN_SOURCES=false 跳过
+                skip_ssrf = not getattr(self.config, "news_intel_validate_builtin_sources", True)
+                self.create_source(payload, skip_validation=skip_ssrf)
                 created_count += 1
             except Exception as exc:
                 errors.append({"source": name, "error": self._sanitize_error(exc)})
@@ -392,6 +397,9 @@ class IntelligenceService:
     def _validate_url(self, raw_url: str, *, allow_no_url: bool = False) -> None:
         if allow_no_url and raw_url.startswith("no-url:intel:"):
             return
+        # [personal patch] fake-ip 环境（DNS 返回 198.18.0.x 被 _is_blocked_ip 误杀）跳过 SSRF
+        if not getattr(self.config, "news_intel_validate_builtin_sources", True):
+            return
         parsed = urlparse(raw_url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             raise IntelligenceServiceError("source url must be an absolute http(s) URL")
@@ -554,6 +562,11 @@ class IntelligenceService:
         return content
 
     def _get_with_validated_dns(self, raw_url: str, **kwargs: Any) -> requests.Response:
+        # [personal patch] fake-ip 环境不做 DNS 层 SSRF 校验（198.18.0.x 被 _validate_addrinfos 误杀）
+        if not getattr(self.config, "news_intel_validate_builtin_sources", True):
+            request_kwargs = dict(kwargs)
+            request_kwargs.setdefault("proxies", _DISABLE_REQUEST_PROXIES)
+            return requests.get(raw_url, **request_kwargs)
         parsed = urlparse(raw_url)
         target_hostname = self._normalize_hostname(parsed.hostname)
         original_getaddrinfo = socket.getaddrinfo

@@ -29,6 +29,8 @@ class IntelAgent(BaseAgent):
         "search_comprehensive_intel",
         "get_stock_info",
         "get_capital_flow",
+        "get_forecast",
+        "get_fina_indicator",
     ]
 
     def system_prompt(self, ctx: AgentContext) -> str:
@@ -45,8 +47,10 @@ the given stock, then produce a structured JSON opinion.
 announcements (公司公告), market analysis, risk checks, and earnings outlook
 3. For A-share stocks, call get_capital_flow to obtain main-force (主力) \
 capital inflow/outflow data and include it in your analysis
-4. Classify positive catalysts and risk alerts
-5. Assess overall sentiment
+4. For A-share stocks, call get_forecast (业绩预告: 预增/预减+幅度) and \
+get_fina_indicator (ROE/毛利率/净利率趋势) to assess fundamental quality
+5. Classify positive catalysts and risk alerts
+6. Assess overall sentiment
 
 ## Risk Detection Priorities
 - Insider / major shareholder sell-downs (减持)
