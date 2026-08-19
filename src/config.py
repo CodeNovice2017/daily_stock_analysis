@@ -1182,6 +1182,8 @@ class Config:
     backtest_min_age_days: int = 14
     backtest_engine_version: str = "v1"
     backtest_neutral_band_pct: float = 2.0
+    # [personal patch] P0-2 观望计分阈值：cash 建议期间涨幅超过该值记 missed_bull
+    backtest_missed_bull_pct: float = 5.0
     
     # === 日志配置 ===
     log_dir: str = "./logs"  # 日志文件目录
@@ -2157,6 +2159,13 @@ class Config:
                 2.0,
                 field_name='BACKTEST_NEUTRAL_BAND_PCT',
                 minimum=0.0,
+            ),
+            # [personal patch] P0-2 观望计分阈值
+            backtest_missed_bull_pct=parse_env_float(
+                os.getenv('BACKTEST_MISSED_BULL_PCT'),
+                5.0,
+                field_name='BACKTEST_MISSED_BULL_PCT',
+                minimum=0.1,
             ),
             log_dir=os.getenv('LOG_DIR', './logs'),
             log_level=os.getenv('LOG_LEVEL', 'INFO'),

@@ -79,6 +79,8 @@ class BacktestService:
             eval_window_days=int(eval_window_days),
             neutral_band_pct=neutral_band_pct,
             engine_version=str(engine_version),
+            # [personal patch] P0-2 观望计分阈值（env: BACKTEST_MISSED_BULL_PCT）
+            missed_bull_pct=float(getattr(config, "backtest_missed_bull_pct", 5.0)),
         )
 
         limit_int = int(limit)
@@ -218,6 +220,7 @@ class BacktestService:
                         direction_expected=evaluation.get("direction_expected"),
                         direction_correct=evaluation.get("direction_correct"),
                         outcome=evaluation.get("outcome"),
+                        cash_opportunity=evaluation.get("cash_opportunity"),
                         stop_loss=evaluation.get("stop_loss"),
                         take_profit=evaluation.get("take_profit"),
                         hit_stop_loss=evaluation.get("hit_stop_loss"),

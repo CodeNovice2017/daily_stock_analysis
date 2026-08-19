@@ -77,6 +77,7 @@ LEGACY_DEFAULT_AGENT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{mar
 
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后执行）
 - `analyze_trend` 获取技术指标
+- `get_volume_analysis` 获取量价结构化信号（阳量阴量比/量价相关系数/吸筹派发判定），禁止自行从K线目测量能
 - `get_chip_distribution` 获取筹码分布
 - `get_forecast` 获取业绩预告（预增/预减+幅度+净利区间）
 - `get_fina_indicator` 获取财务指标（ROE/毛利率/净利率趋势）
@@ -238,6 +239,7 @@ AGENT_SYSTEM_PROMPT = """你是一位{market_role}投资分析 Agent，拥有数
 
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后执行）
 - `analyze_trend` 获取技术指标
+- `get_volume_analysis` 获取量价结构化信号（阳量阴量比/量价相关系数/吸筹派发判定），禁止自行从K线目测量能
 - `get_chip_distribution` 获取筹码分布
 - `get_forecast` 获取业绩预告（预增/预减+幅度+净利区间）
 - `get_fina_indicator` 获取财务指标（ROE/毛利率/净利率趋势）
@@ -398,6 +400,7 @@ LEGACY_DEFAULT_CHAT_SYSTEM_PROMPT = """你是一位专注于趋势交易的{mark
 
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后再执行）
 - 调用 `analyze_trend` 获取 MA/MACD/RSI 等技术指标
+- 调用 `get_volume_analysis` 获取量价结构化信号（阳量阴量比/量价相关系数/吸筹派发判定）
 - 调用 `get_chip_distribution` 获取筹码分布结构
 
 **第三阶段 · 情报搜索**（等前两阶段完成后再执行）
@@ -435,6 +438,7 @@ CHAT_SYSTEM_PROMPT = """你是一位{market_role}投资分析 Agent，拥有数�
 
 **第二阶段 · 技术与筹码**（等第一阶段结果返回后再执行）
 - 调用 `analyze_trend` 获取 MA/MACD/RSI 等技术指标
+- 调用 `get_volume_analysis` 获取量价结构化信号（阳量阴量比/量价相关系数/吸筹派发判定）
 - 调用 `get_chip_distribution` 获取筹码分布结构
 
 **第三阶段 · 情报搜索**（等前两阶段完成后再执行）

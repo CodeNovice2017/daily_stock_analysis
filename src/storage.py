@@ -432,6 +432,10 @@ class BacktestResult(Base):
     direction_correct = Column(Boolean, nullable=True)
     outcome = Column(String(16))  # win/loss/neutral
 
+    # [personal patch] P0-2 观望计分：cash 建议期间的机会成本分类
+    # missed_bull=期间涨幅超阈值(错失机会) / correct_avoid=期间跌幅超阈值(成功规避)
+    cash_opportunity = Column(String(16))
+
     # 目标价命中（仅 long 且配置了止盈/止损时有意义）
     stop_loss = Column(Float)
     take_profit = Column(Float)
@@ -1372,6 +1376,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             Base.metadata.create_all(self._engine)
             self._ensure_llm_usage_telemetry_columns()
             self._ensure_decision_signal_profile_schema()
+            self._ensure_backtest_cash_opportunity_column()
             self._ensure_intelligence_item_scope_values()
             self._ensure_schema_migration_record()
             self._ensure_intelligence_items_unique_index()
@@ -1418,6 +1423,36 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             raise
         finally:
             session.close()
+
+    def _ensure_backtest_cash_opportunity_column(self) -> None:
+        """[personal patch] P0-2 观望计分：为既有库补 cash_opportunity 列。"""
+
+        if not self._is_sqlite_engine:
+            return
+        inspector = inspect(self._engine)
+        if not inspector.has_table(BacktestResult.__tablename__):
+            return
+        try:
+            existing = {
+                column["name"]
+                for column in inspector.get_columns(BacktestResult.__tablename__)
+            }
+        except Exception as exc:
+            logger.error(
+                "[Backtest] failed to inspect cash_opportunity column: %s", exc,
+            )
+            raise
+        if "cash_opportunity" in existing:
+            return
+        try:
+            with self._engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {BacktestResult.__tablename__} "
+                    "ADD COLUMN cash_opportunity VARCHAR(16)"
+                )
+        except OperationalError as exc:
+            if not self._is_sqlite_duplicate_column_error(exc, "cash_opportunity"):
+                raise
 
     def _ensure_decision_signal_profile_schema(self) -> None:
         """Add and backfill nullable decision_profile for existing SQLite DBs."""

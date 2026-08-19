@@ -47,6 +47,8 @@ class EvaluationConfig:
     eval_window_days: int
     neutral_band_pct: float = 2.0
     engine_version: str = "v1"
+    # [personal patch] P0-2 观望计分阈值：cash 建议期间涨幅超过该值记 missed_bull
+    missed_bull_pct: float = 5.0
 
 
 class BacktestEngine:
@@ -219,6 +221,13 @@ class BacktestEngine:
             neutral_band_pct=config.neutral_band_pct,
         )
 
+        # [personal patch] P0-2 观望计分：cash 建议期间的机会成本分类
+        cash_opportunity = cls._classify_cash_opportunity(
+            stock_return_pct=stock_return_pct,
+            position=position,
+            missed_bull_pct=config.missed_bull_pct,
+        )
+
         (
             hit_stop_loss,
             hit_take_profit,
@@ -259,6 +268,7 @@ class BacktestEngine:
             "direction_expected": direction_expected,
             "direction_correct": direction_correct,
             "outcome": outcome,
+            "cash_opportunity": cash_opportunity,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "hit_stop_loss": hit_stop_loss,
@@ -638,6 +648,31 @@ class BacktestEngine:
         if abs(r) <= band:
             return "win", True
         return "loss", False
+
+    @staticmethod
+    def _classify_cash_opportunity(
+        *,
+        stock_return_pct: Optional[float],
+        position: Optional[str],
+        missed_bull_pct: float,
+    ) -> Optional[str]:
+        """[personal patch] P0-2 观望计分：cash 建议期间的机会成本分类。
+
+        仅对 cash 建议分类（long 建议已有 win/loss 评价，无需重复）：
+        - missed_bull: 期间涨幅 >= missed_bull_pct（错失机会，观望的代价）
+        - correct_avoid: 期间跌幅 <= -missed_bull_pct（成功规避大跌）
+        - neutral: 介于两者之间
+        目的：让"该说买时没说"有度量，对抗观望无成本的评估盲区。
+        """
+        if position != "cash" or stock_return_pct is None:
+            return None
+        r = float(stock_return_pct)
+        threshold = abs(float(missed_bull_pct))
+        if r >= threshold:
+            return "missed_bull"
+        if r <= -threshold:
+            return "correct_avoid"
+        return "neutral"
 
     @classmethod
     def _classify_signal_outcome(

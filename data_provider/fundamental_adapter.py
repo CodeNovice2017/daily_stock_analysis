@@ -104,6 +104,40 @@ def _pick_by_keywords(row: pd.Series, keywords: List[str]) -> Optional[Any]:
     return None
 
 
+def _extract_latest_from_transposed_abstract(df: pd.DataFrame) -> Optional[pd.Series]:
+    """Extract the latest-period Series from a transposed abstract table.
+
+    ``akshare.stock_financial_abstract`` returns 指标-as-rows / 报告期-as-columns
+    (``['选项', '指标', '20260331', '20251231', ...]``). ``_extract_latest_row``
+    assumes indicator-as-columns and returns all-None for this shape, silently
+    dropping fundamentals. Detect that shape and pivot: index by 指标, take the
+    newest non-empty period column.
+    """
+    if df is None or df.empty or "指标" not in df.columns:
+        return None
+    period_cols = [
+        c for c in df.columns
+        if str(c).isdigit() and len(str(c)) == 8
+    ]
+    if not period_cols:
+        return None
+    # Period columns are newest-first in this table; walk to first non-empty.
+    latest_col = None
+    for col in period_cols:
+        series = df[col].dropna()
+        if not series.empty:
+            latest_col = col
+            break
+    if latest_col is None:
+        return None
+    indexed = pd.Series(
+        df[latest_col].values, index=df["指标"].astype(str).values
+    )
+    # 指标列可能存在重名（如不同"选项"分组下的同名指标）→ 去重保首个非空。
+    indexed = indexed[~indexed.index.duplicated(keep="first")]
+    return indexed.dropna()
+
+
 def _parse_dividend_plan_to_per_share(plan_text: str) -> Optional[float]:
     """Parse per-share cash dividend from Chinese plan text."""
     text = _safe_str(plan_text)
@@ -324,10 +358,13 @@ class AkshareFundamentalAdapter:
         ])
         result["errors"].extend(fin_errors)
         if fin_df is not None:
-            row = _extract_latest_row(fin_df, stock_code)
+            transposed_row = _extract_latest_from_transposed_abstract(fin_df)
+            row = transposed_row if transposed_row is not None else _extract_latest_row(
+                fin_df, stock_code
+            )
             if row is not None:
-                revenue_yoy = _safe_float(_pick_by_keywords(row, ["营业收入同比", "营收同比", "收入同比", "同比增长"]))
-                profit_yoy = _safe_float(_pick_by_keywords(row, ["净利润同比", "净利同比", "归母净利润同比"]))
+                revenue_yoy = _safe_float(_pick_by_keywords(row, ["营业收入同比", "营收同比", "收入同比", "营业总收入增长率", "同比增长"]))
+                profit_yoy = _safe_float(_pick_by_keywords(row, ["净利润同比", "净利同比", "归母净利润同比", "归属母公司净利润增长率"]))
                 roe = _safe_float(_pick_by_keywords(row, ["净资产收益率", "ROE", "净资产收益"]))
                 gross_margin = _safe_float(_pick_by_keywords(row, ["毛利率"]))
                 report_date = _normalize_report_date(_pick_by_keywords(row, _DIVIDEND_KEYWORD_MAP["report_date"]))

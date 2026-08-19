@@ -1336,8 +1336,15 @@ class AgentOrchestrator:
             sentiment_score = int(sentiment_score)
         except (TypeError, ValueError):
             sentiment_score = _estimate_sentiment_score(decision_type, confidence)
+        pre_risk_sentiment_score: Optional[int] = None
         if risk_applied:
-            sentiment_score = _adjust_sentiment_score(sentiment_score, decision_type)
+            pre_risk_sentiment_score = sentiment_score
+            # [personal patch] 软压缩替代硬压：保留个股间区分度（P0-1 分层表达）
+            sentiment_score = _soft_adjust_sentiment_score(
+                sentiment_score,
+                application.from_signal.value,
+                decision_type,
+            )
 
         dashboard_block = payload.get("dashboard")
         if not isinstance(dashboard_block, dict):
@@ -1544,6 +1551,23 @@ class AgentOrchestrator:
         dashboard_block["core_conclusion"] = core
         dashboard_block["intelligence"] = intelligence
         dashboard_block["battle_plan"] = battle
+
+        # [personal patch] P0-1 风控分层表达：降级后区分"原观点"与"最终建议"，
+        # 避免"看多等回踩"与"趋势坏了该跑"被压成同一个标签。
+        if risk_applied:
+            dashboard_block["risk_control"] = {
+                "applied": True,
+                "pre_risk_signal": application.from_signal.value,
+                "post_risk_signal": decision_type,
+                "pre_risk_sentiment_score": pre_risk_sentiment_score,
+                "downgrade_reason": application.reason.value,
+                "narrative": _risk_downgrade_narrative(
+                    application.from_signal.value,
+                    decision_type,
+                    application.reason.value,
+                    pre_risk_sentiment_score,
+                ),
+            }
 
         key_points = payload.get("key_points")
         if not isinstance(key_points, list) or not key_points:
@@ -1980,15 +2004,31 @@ def _extract_stock_code(text: str) -> str:
     return ""
 
 
-def _adjust_sentiment_score(score: int, signal: str) -> int:
-    """Clamp sentiment score into the target band for the overridden signal."""
+def _soft_adjust_sentiment_score(score: int, from_signal: str, to_signal: str) -> int:
+    """Soft-compress the score on risk downgrade, preserving cross-stock spread.
+
+    降级时不再硬压到目标档上限：按降级步数部分回撤，保留个股间相对差异。
+    - buy→hold（veto/一步降）：原分基础上 -8，最低不低于 hold 档下限
+    - hold→sell / buy→sell（一步/两步降）：原分基础上 -15，最低不低于 sell 档中值
+    上限仍受目标档约束，避免出现 sell 信号配高分的不一致。
+    """
     bands = {
         "buy": (60, 79),
         "hold": (40, 59),
         "sell": (0, 39),
     }
-    low, high = bands.get(signal, (0, 100))
-    return max(low, min(high, score))
+    to_low, to_high = bands.get(to_signal, (0, 100))
+    steps = 0
+    order = ["buy", "hold", "sell"]
+    try:
+        steps = order.index(to_signal) - order.index(from_signal)
+    except ValueError:
+        steps = 1
+    penalty = 8 if steps <= 1 else 15
+    adjusted = int(score) - penalty
+    # 保底：不低于目标档中值（sell=19，hold=49），避免极端低分误读为崩盘
+    floor = (to_low + to_high) // 2
+    return max(floor, min(to_high, adjusted))
 
 
 def _adjust_operation_advice(advice: str, signal: str) -> str:
@@ -2003,6 +2043,38 @@ def _adjust_operation_advice(advice: str, signal: str) -> str:
     if advice == mapping[signal]:
         return advice
     return f"{mapping[signal]}（原建议已被风控下调）"
+
+
+def _risk_downgrade_narrative(
+    from_signal: str,
+    to_signal: str,
+    reason: str,
+    pre_risk_score: Optional[int],
+) -> str:
+    """Build the layered downgrade narrative distinguishing view from action.
+
+    区分三类情形，避免表达失真：
+    - buy→hold：看多但风控暂缓（"观点仍偏多，等待风控条件解除"）
+    - hold→sell：中性观点被下调（"原判断中性，风控因素压倒"）
+    - buy→sell：两步降（"原观点看多被否决，需警惕逻辑破坏"）
+    """
+    score_hint = f"（原评分 {pre_risk_score}）" if pre_risk_score is not None else ""
+    if (from_signal, to_signal) == ("buy", "hold"):
+        return (
+            f"观点仍偏多{score_hint}，因风控因素（{reason}）暂缓买入，"
+            "等待风险信号解除或回踩确认后再评估"
+        )
+    if (from_signal, to_signal) == ("buy", "sell"):
+        return (
+            f"原观点看多{score_hint}，但风控否决（{reason}），"
+            "多头逻辑可能被破坏，需重新审视持仓"
+        )
+    if (from_signal, to_signal) == ("hold", "sell"):
+        return (
+            f"原判断中性{score_hint}，风控因素（{reason}）压倒中性判断，"
+            "建议防守优先"
+        )
+    return f"信号由 {from_signal} 下调至 {to_signal}（{reason}）{score_hint}"
 
 
 def _signal_to_operation(signal: str) -> str:
