@@ -30,8 +30,8 @@ lark-oapi>=1.0.0             # Feishu API
 
 # Data processing
 pandas>=2.0.0               # Data analysis
-duckdb>=0.10.0              # 嵌入式列式分析引擎（量化数据管线）
-pyarrow>=14.0.0             # Parquet 文件读写（量化数据存储）
+duckdb>=0.10.0              # Embedded columnar analytics engine (quant data pipeline)
+pyarrow>=14.0.0             # Parquet file I/O (quant data storage)
 pypinyin>=0.50.0            # Name-to-code resolver (pinyin matching)
 openpyxl>=3.1.0             # Excel (.xlsx) parsing for import
 numpy>=1.24.0               # Numeric computing

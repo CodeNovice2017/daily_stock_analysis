@@ -342,7 +342,7 @@ score >= 70 → 买入/加仓
 - B4 quant_data parquet 接入——`data/quant/`（1.6G parquet+duckdb）给 `get_daily_data` 加只读源，只覆盖历史 bar
 - B5 rt_k 静默禁用——5000 积分无该接口权限，反复重试浪费
 
-**验证**：`tests/test_tushare_fina_cache.py` 8 passed（含硬上限/假时钟超限重试用例）；`ci_gate.sh` 全量离线套件 5911 passed / 38 failed，失败集与干净 HEAD c0e31a27（隔离 worktree 对照）逐条一致——全部为存量问题：①pipeline news_context Tushare 补充数据路径的 MagicMock 格式化测试债 15 例；②本地 .env LLM 渠道配置泄漏进 system_config 测试 14 例；③fake-ip 环境 SSRF 用例 4 例；④env.example/requirements 本地漂移 2 例。本改动零新增失败。
+**验证**：`tests/test_tushare_fina_cache.py` 8 passed（含硬上限/假时钟超限重试用例）。首次基线 5911 passed / 38 failed，经隔离 worktree 对照确认全部为存量问题；随后修复其中 17 个 fork 自有测试债（pipeline MagicMock 泄漏 15 例、`BACKTEST_MISSED_BULL_PCT` 注册遗漏、requirements 中文注释），当前基线 **5929 passed / 21 failed**，剩余 21 例均为上游代码 + 本地环境触发（.env LLM 渠道泄漏进 system_config 测试 16 例、fake-ip SSRF 5 例），上游 CI 干净环境下不受影响。
 
 ### 9.4 下一步（P1，待 P0 观察一两周后）
 

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 按最新 review 复核收敛 3 处正确性问题（OR-COM-7f3d3f5b / 3d6b61f8 / a1e8b0c2）：`BaseAgent._filtered_registry()` 携带源 registry 的类别超时映射（工具子集仍生效类别上限，不再绕过 #1890 类别超时）；并行批次 >5 时排队调用的 per-tool 超时自 worker 实际开始起算（不再提交即烧预算导致对未启动调用的假超时）；`get_tool_registry()` 缓存命中快路径在锁内读取一致对（消除与 `reset_tool_registry()` 竞态返回 `None` 或错配 registry）。新增对应回归测试。
 - [改进] Tushare 财报/估值类接口（业绩预告、财务指标、融资融券、每日估值）增加实例级 TTL 缓存：季度级数据 24h、日更数据 4h，失败/空结果不缓存，512 条硬上限（先清过期、仍超限按最近过期淘汰）防长驻进程无界增长。
 - [改进] Tushare 限频计数器由实例级改为类级共享，修复 manager/intraday/ml_agent 各建实例导致配额预算 ×3 的漏洞（锁内计数、锁外等待）；新增 `TUSHARE_RATE_LIMIT_PER_MINUTE` 环境变量并透传至全部实例化点（默认 80，5000 积分账号可放宽）。
+- [修复] Web 设置注册表补登记 `BACKTEST_MISSED_BULL_PCT`（观望计分阈值，此前仅在 .env.example 生效未进设置页）；测试侧修复 15 个 pipeline 用例因 MagicMock 数据源管理器泄漏进 Tushare 补充数据格式化路径而失败的问题（显式置空 `_fetchers_by_name` 使其按"未配置"跳过），并新增该补充数据块的正向覆盖用例。
 
 ## [3.30.0] - 2026-08-09
 

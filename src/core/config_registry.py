@@ -3683,6 +3683,31 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "warning_codes": [],
     },
+    "BACKTEST_MISSED_BULL_PCT": {
+        "title": "Backtest Missed Bull Threshold (%)",
+        "description": "Cash / hold recommendations are classified as missed_bull when the stock rises more than this percentage over the evaluation window.",
+        "category": "backtest",
+        "data_type": "number",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "5.0",
+        "options": [],
+        "validation": {"min": 0, "max": 100},
+        "display_order": 31,
+        "help_key": "settings.backtest.eval_params",
+        "examples": [
+            "BACKTEST_MISSED_BULL_PCT=5.0",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
+    },
     "BACKTEST_ENGINE_VERSION": {
         "title": "Backtest Engine Version",
         "description": "Backtest engine version label.",

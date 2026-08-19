@@ -87,6 +87,9 @@ def _make_pipeline(*, agent_mode: bool = False, save_context_snapshot: bool = Tr
         "coverage": {"boards": "not_supported"},
         "source_chain": [],
     }
+    # MagicMock 管理器未走真实 __init__,显式置空注册表,
+    # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+    pipeline.fetcher_manager._fetchers_by_name = {}
 
     pipeline.db = MagicMock()
     pipeline.db.get_data_range.return_value = []
@@ -557,6 +560,79 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
             "items",
             str(save_kwargs["context_snapshot"]["analysis_context_pack_overview"]),
         )
+
+    def test_agent_tushare_supplement_injected_into_news_context(self):
+        """[personal patch] Tushare 补充数据块的正向覆盖。
+
+        回归锚点:融资融券数值经过 `/1e4` 与 `:+.0f` 格式化,历史上
+        MagicMock 管理器在此抛 TypeError 掩盖了 15 个用例。
+        """
+        pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=False)
+        pipeline._ensure_agent_history = MagicMock()
+
+        fake_ts = MagicMock()
+        fake_ts.get_forecast.return_value = {
+            "report_period": "20260630",
+            "type": "预增",
+            "p_change_min": 80.0,
+            "p_change_max": 90.0,
+            "net_profit_min": 3.1e10,
+            "net_profit_max": 3.3e10,
+            "summary": "业绩预增",
+        }
+        fake_ts.get_fina_indicator.return_value = {
+            "latest": {"period": "20260630", "roe": 4.5, "net_margin": 35.0, "debt_ratio": 78.0},
+            "roe_trend": "up",
+        }
+        fake_ts.get_margin_detail.return_value = {
+            "rzye": 5.2e9,
+            "rqye": 3.1e7,
+            "rzmre": 2.0e8,
+            "rzye_change_5d": 1.5e8,
+            "trade_date": "20260818",
+        }
+        pipeline.fetcher_manager._fetchers_by_name = {"TushareFetcher": fake_ts}
+
+        from src.agent.executor import AgentResult
+
+        executor = MagicMock()
+        executor.run.return_value = AgentResult(
+            success=True,
+            content="{}",
+            dashboard={
+                "stock_name": "贵州茅台",
+                "sentiment_score": 66,
+                "trend_prediction": "震荡",
+                "operation_suggestion": "持有",
+                "operation_advice": "持有",
+                "decision_type": "hold",
+            },
+            provider="test",
+        )
+
+        with patch("src.agent.factory.build_agent_executor", return_value=executor):
+            result = pipeline._analyze_with_agent(
+                code="600519",
+                report_type=ReportType.SIMPLE,
+                query_id="q-agent-ts-supplement",
+                stock_name="贵州茅台",
+                realtime_quote=None,
+                chip_data=None,
+                fundamental_context={"market": "cn"},
+                trend_result=None,
+                market_phase_context=_phase_payload(),
+            )
+
+        self.assertIsNotNone(result)
+        run_context = executor.run.call_args.kwargs["context"]
+        news = run_context["news_context"]
+        self.assertIn("[Tushare Pro 补充数据]", news)
+        self.assertIn("【业绩预告】", news)
+        self.assertIn("【财务指标】", news)
+        self.assertIn("【融资融券】", news)
+        # 数值格式化回归锚点:rzye=5.2e9 → 520000万;rzye_change_5d=1.5e8 → +15000万
+        self.assertIn("520000万", news)
+        self.assertIn("+15000万", news)
 
     def test_agent_pack_summary_uses_db_daily_context_after_history_prefetch(self):
         pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=True)

@@ -598,6 +598,9 @@ class TestAgentResultConversion(unittest.TestCase):
 
             from src.core.pipeline import StockAnalysisPipeline
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             return pipeline
 
     def test_convert_success_dashboard(self):
@@ -1583,6 +1586,9 @@ class TestPipelineRouting(unittest.TestCase):
             from src.core.pipeline import StockAnalysisPipeline
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
 
             # Mock _analyze_with_agent to verify it gets called
             pipeline._analyze_with_agent = MagicMock(return_value=None)
@@ -1629,6 +1635,9 @@ class TestPipelineRouting(unittest.TestCase):
             from src.core.pipeline import StockAnalysisPipeline
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
 
             # Mock the fetcher_manager to return None for realtime
             pipeline.fetcher_manager.get_realtime_quote.return_value = None
@@ -1728,6 +1737,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             )
 
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
             pipeline.db.save_analysis_history.return_value = 2044
             pipeline._extract_decision_signal_after_history_save = MagicMock()
@@ -1840,6 +1852,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             )
 
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
             pipeline.db.save_analysis_history.return_value = 2044
             pipeline._extract_decision_signal_after_history_save = MagicMock()
@@ -1937,6 +1952,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.agent.executor import AgentResult
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
 
             agent_result = AgentResult(
                 success=True,
@@ -2019,6 +2037,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.enums import ReportType
             from src.stock_analyzer import TrendAnalysisResult, TrendStatus, BuySignal
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
 
             agent_result = AgentResult(
                 success=True,
@@ -2167,6 +2188,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.enums import ReportType
 
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
             pipeline._ensure_agent_history = MagicMock()
             pipeline._build_analysis_context_pack_outputs = MagicMock(
@@ -2275,6 +2299,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.services.daily_market_context import DailyMarketContext
 
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
             pipeline.db.save_analysis_history.return_value = 1
             pipeline._extract_decision_signal_after_history_save = MagicMock()
@@ -2409,6 +2436,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.agent.executor import AgentResult
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
 
             agent_result = AgentResult(
@@ -2488,6 +2518,9 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             from src.enums import ReportType
 
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
             pipeline.search_service.is_available = False
             pipeline._ensure_agent_history = MagicMock()
             pipeline._agent_result_to_analysis_result = MagicMock(
@@ -3425,6 +3458,9 @@ class TestSkillActivation(unittest.TestCase):
             from src.agent.executor import AgentResult
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            # MagicMock 管理器未走真实 __init__,显式置空注册表,
+            # 使 Tushare 直连补充路径按"未配置"跳过(契约正确的 mock)
+            pipeline.fetcher_manager._fetchers_by_name = {}
 
             # Dashboard with "80分" instead of 80
             agent_result = AgentResult(
