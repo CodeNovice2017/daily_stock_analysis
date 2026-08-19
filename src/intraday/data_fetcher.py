@@ -20,7 +20,10 @@ class IntradayDataFetcher:
             self._fetcher = tushare_fetcher
         else:
             from data_provider.tushare_fetcher import TushareFetcher
-            self._fetcher = TushareFetcher()
+            from src.config import get_config
+            # [personal patch] P1-B3：透传限频配置
+            rate_limit = getattr(get_config(), "tushare_rate_limit_per_minute", 80)
+            self._fetcher = TushareFetcher(rate_limit_per_minute=rate_limit)
 
     def _to_ts_code(self, stock_code: str) -> str:
         return self._fetcher._convert_stock_code(stock_code)

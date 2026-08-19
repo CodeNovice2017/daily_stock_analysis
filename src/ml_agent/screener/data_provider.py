@@ -27,7 +27,13 @@ class MLDataProvider:
     """
 
     def __init__(self, fetcher: Optional[TushareFetcher] = None):
-        self._fetcher = fetcher or TushareFetcher()
+        if fetcher is not None:
+            self._fetcher = fetcher
+        else:
+            from src.config import get_config
+            # [personal patch] P1-B3：透传限频配置
+            rate_limit = getattr(get_config(), "tushare_rate_limit_per_minute", 80)
+            self._fetcher = TushareFetcher(rate_limit_per_minute=rate_limit)
         if self._fetcher._api is None:
             raise RuntimeError("TushareFetcher 未初始化，请检查 TUSHARE_TOKEN")
 

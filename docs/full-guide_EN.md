@@ -160,6 +160,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | Auto-discover public SearXNG instances from `searx.space` when `SEARXNG_BASE_URLS` is empty (default `true`) | Optional |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638) Token | Optional |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP endpoint; when unset/empty defaults to the official `http://api.tushare.pro`. Set to a `http://` or `https://` URL only when routing through a corporate proxy, cross-border network, or a self-hosted mirror | Optional |
+| `TUSHARE_RATE_LIMIT_PER_MINUTE` | Max Tushare API requests per minute; defaults to `80` (free quota), raise to 200-500 for 5000-point accounts; all TushareFetcher instances share one quota budget | Optional |
 | `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API key for optional A-share daily K-lines, realtime quotes, stock list/name lookup, and CN market review enhancement; permission or entitlement failures fall back to existing providers | Optional |
 
 > **GitHub Actions:** The bundled `00-daily-analysis.yml` maps `TUSHARE_TOKEN`, `TICKFLOW_API_KEY` / `TICKFLOW_*`, and the documented `LONGBRIDGE_*` variables into the job environment. Store `TICKFLOW_API_KEY` in **Secrets**; non-sensitive TickFlow priority, adjustment, and batch switches can live in **Variables** or **Secrets**. Longbridge OAuth still requires a client id plus `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` for headless Actions runs, while the legacy `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` / `LONGBRIDGE_ACCESS_TOKEN` triplet remains supported.
@@ -358,6 +359,7 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 |--------|------|--------|:----:|
 | `TUSHARE_TOKEN` | Tushare Pro Token | - | Optional |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP endpoint; defaults to `http://api.tushare.pro` when unset/empty. Set only when routing through a corporate proxy, cross-border network, or a self-hosted mirror (must start with `http://` or `https://`). | `http://api.tushare.pro` | Optional |
+| `TUSHARE_RATE_LIMIT_PER_MINUTE` | Max Tushare API requests per minute; all TushareFetcher instances share one quota budget | `80` | Optional |
 | `TICKFLOW_API_KEY` | TickFlow API key; enables optional A-share daily K-lines, realtime quotes, stock list/name lookup, and CN market review enhancement. Permission failures fall back to existing providers. | - | Optional |
 | `TICKFLOW_PRIORITY` | TickFlow daily K-line provider priority; lower values are tried earlier. No effect unless `TICKFLOW_API_KEY` is configured. Does not affect realtime quotes, which are ordered by `REALTIME_SOURCE_PRIORITY`. | `2` | Optional |
 | `TENCENT_PRIORITY` | Tencent direct A-share daily K-line provider priority; lower values are tried earlier. Defaults to `5` as the last fallback after Efinance, AkShare, Tushare, TickFlow, PyTDX, Baostock, and YFinance. Does not affect realtime quotes. | `5` | Optional |

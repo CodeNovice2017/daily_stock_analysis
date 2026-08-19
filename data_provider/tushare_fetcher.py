@@ -17,6 +17,7 @@ TushareFetcher - 备用数据源 1 (Priority 2)
 import json as _json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, List, Dict, Any
@@ -152,19 +153,28 @@ class TushareFetcher(BaseFetcher):
     name = "TushareFetcher"
     priority = int(os.getenv("TUSHARE_PRIORITY", "2"))  # 默认优先级，会在 __init__ 中根据配置动态调整
 
+    # [personal patch] P1-B3：类级共享限频计数器。
+    # 此前计数器是实例属性，manager/intraday/ml_agent 各建实例 → 配额预算×3。
+    # 改为类级后所有实例共用一个 60s 滚动窗口；锁保证并发安全。
+    _shared_call_count: int = 0
+    _shared_minute_start: Optional[float] = None
+    _shared_rate_lock = threading.Lock()
+
     def __init__(self, rate_limit_per_minute: int = 80):
         """
         初始化 TushareFetcher
 
         Args:
-            rate_limit_per_minute: 每分钟最大请求数（默认80，Tushare免费配额）
+            rate_limit_per_minute: 每分钟最大请求数（默认80，Tushare免费配额）。
+                [personal patch] P1-B3：实例化方应透传 config.tushare_rate_limit_per_minute；
+                限频计数器为类级共享，多实例（manager/intraday/ml_agent）共用一个配额预算。
         """
         self.rate_limit_per_minute = rate_limit_per_minute
-        self._call_count = 0  # 当前分钟内的调用次数
-        self._minute_start: Optional[float] = None  # 当前计数周期开始时间
         self._api: Optional[object] = None  # Tushare API 实例
         self.date_list: Optional[List[str]] = None  # 交易日列表缓存（倒序，最新日期在前）
         self._date_list_end: Optional[str] = None  # 缓存对应的截止日期，用于跨日刷新
+        # [personal patch] P1-B1 财报 TTL 缓存：{cache_key: (expire_ts, payload)}
+        self._fina_cache: Dict[str, Tuple[float, Any]] = {}
 
         # 尝试初始化 API
         self._init_api()
@@ -246,44 +256,42 @@ class TushareFetcher(BaseFetcher):
     def _check_rate_limit(self) -> None:
         """
         检查并执行速率限制
-        
+
         流控策略：
         1. 检查是否进入新的一分钟
         2. 如果是，重置计数器
         3. 如果当前分钟调用次数超过限制，强制休眠
+
+        [personal patch] P1-B3：计数器为类级共享（跨实例统一预算），锁内完成
+        检查与计数，锁外 sleep 避免阻塞其他线程的检查。
         """
-        current_time = time.time()
-        
-        # 检查是否需要重置计数器（新的一分钟）
-        if self._minute_start is None:
-            self._minute_start = current_time
-            self._call_count = 0
-        elif current_time - self._minute_start >= 60:
-            # 已经过了一分钟，重置计数器
-            self._minute_start = current_time
-            self._call_count = 0
-            logger.debug("速率限制计数器已重置")
-        
-        # 检查是否超过配额
-        if self._call_count >= self.rate_limit_per_minute:
-            # 计算需要等待的时间（到下一分钟）
-            elapsed = current_time - self._minute_start
-            sleep_time = max(0, 60 - elapsed) + 1  # +1 秒缓冲
-            
-            logger.warning(
-                f"Tushare 达到速率限制 ({self._call_count}/{self.rate_limit_per_minute} 次/分钟)，"
-                f"等待 {sleep_time:.1f} 秒..."
-            )
-            
+        while True:
+            with TushareFetcher._shared_rate_lock:
+                current_time = time.time()
+                cls = TushareFetcher
+                if cls._shared_minute_start is None:
+                    cls._shared_minute_start = current_time
+                    cls._shared_call_count = 0
+                elif current_time - cls._shared_minute_start >= 60:
+                    cls._shared_minute_start = current_time
+                    cls._shared_call_count = 0
+                    logger.debug("速率限制计数器已重置")
+
+                if cls._shared_call_count < self.rate_limit_per_minute:
+                    cls._shared_call_count += 1
+                    count = cls._shared_call_count
+                    break
+
+                # 超配额：锁外等待到下一分钟再重试
+                elapsed = current_time - cls._shared_minute_start
+                sleep_time = max(0, 60 - elapsed) + 1
+                logger.warning(
+                    f"Tushare 达到速率限制 ({cls._shared_call_count}/{self.rate_limit_per_minute} 次/分钟)，"
+                    f"等待 {sleep_time:.1f} 秒..."
+                )
             time.sleep(sleep_time)
-            
-            # 重置计数器
-            self._minute_start = time.time()
-            self._call_count = 0
-        
-        # 增加调用计数
-        self._call_count += 1
-        logger.debug(f"Tushare 当前分钟调用次数: {self._call_count}/{self.rate_limit_per_minute}")
+
+        logger.debug(f"Tushare 当前分钟调用次数(共享): {count}/{self.rate_limit_per_minute}")
 
     def _call_api_with_rate_limit(self, method_name: str, **kwargs) -> pd.DataFrame:
         """统一通过速率限制包装 Tushare API 调用。"""
@@ -293,6 +301,42 @@ class TushareFetcher(BaseFetcher):
         self._check_rate_limit()
         method = getattr(self._api, method_name)
         return method(**kwargs)
+
+    # ── [personal patch] P1-B1 财报 TTL 缓存 ──────────────────────────────
+    # 依据（缓存合理性矩阵，2026-08-19 设计）：
+    #   fina_indicator/forecast → 季度/公告日更新 → TTL 24h
+    #   margin_detail           → T+1 晨间更新   → TTL 4h
+    #   daily_basic_valuation   → 收盘后更新（盘中本就只反映昨日）→ TTL 4h
+    # 财报类数据源本身非盘中实时，缓存与场景（盘中/盘后）无关；
+    # 实时行情与盘中资金流不在本缓存范围（遵守"盘中分析不吃缓存价"铁律）。
+    _FINA_CACHE_TTL_SLOW_S = 24 * 3600   # 季度级数据
+    _FINA_CACHE_TTL_DAILY_S = 4 * 3600   # 日更数据
+    _FINA_CACHE_MAX_ENTRIES = 512        # 硬上限，防 serve 模式长生命周期无界增长
+
+    def _fina_cache_get(self, key: str) -> Optional[Any]:
+        entry = self._fina_cache.get(key)
+        if entry is None:
+            return None
+        expire_ts, payload = entry
+        if time.time() >= expire_ts:
+            self._fina_cache.pop(key, None)
+            return None
+        return payload
+
+    def _fina_cache_put(self, key: str, payload: Any, ttl: float) -> None:
+        # 容量护栏：先清过期项；若仍达上限（如 screener 扫全市场、条目均在
+        # TTL 内），再按过期时间从近到远淘汰，保证硬上限成立。
+        now = time.time()
+        if len(self._fina_cache) >= self._FINA_CACHE_MAX_ENTRIES:
+            self._fina_cache = {
+                k: v for k, v in self._fina_cache.items() if v[0] > now
+            }
+        if len(self._fina_cache) >= self._FINA_CACHE_MAX_ENTRIES:
+            keep = sorted(
+                self._fina_cache.items(), key=lambda kv: kv[1][0], reverse=True
+            )
+            self._fina_cache = dict(keep[: self._FINA_CACHE_MAX_ENTRIES - 1])
+        self._fina_cache[key] = (now + ttl, payload)
 
     def _get_china_now(self) -> datetime:
         """返回上海时区当前时间，方便测试覆盖跨日刷新逻辑。"""
@@ -1226,9 +1270,13 @@ class TushareFetcher(BaseFetcher):
             return None
 
     def get_forecast(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """业绩预告(forecast):预告类型/增幅区间/净利区间。5000 积分。"""
+        """业绩预告(forecast):预告类型/增幅区间/净利区间。5000 积分。TTL 缓存 24h。"""
         if _is_us_code(stock_code) or _is_hk_market(stock_code):
             return None
+        cache_key = f"forecast:{stock_code}"
+        cached = self._fina_cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             from .realtime_types import safe_float
             ts_code = self._convert_stock_code(stock_code)
@@ -1239,7 +1287,7 @@ class TushareFetcher(BaseFetcher):
             if df is None or df.empty:
                 return None
             latest = df.sort_values("ann_date", ascending=False).iloc[0]
-            return {
+            payload = {
                 "report_period": str(latest.get("end_date", "")),
                 "type": str(latest.get("type", "")),
                 "p_change_min": safe_float(latest.get("p_change_min")),
@@ -1248,14 +1296,20 @@ class TushareFetcher(BaseFetcher):
                 "net_profit_max": safe_float(latest.get("net_profit_max")),
                 "summary": str(latest.get("summary", "")),
             }
+            self._fina_cache_put(cache_key, payload, self._FINA_CACHE_TTL_SLOW_S)
+            return payload
         except Exception as e:
             logger.debug(f"Tushare forecast 失败 {stock_code}: {e}")
             return None
 
     def get_fina_indicator(self, stock_code: str, n: int = 4) -> Optional[Dict[str, Any]]:
-        """财务指标(fina_indicator):ROE/毛利率/净利率 最近 n 个季度。5000 积分。"""
+        """财务指标(fina_indicator):ROE/毛利率/净利率 最近 n 个季度。5000 积分。TTL 缓存 24h。"""
         if _is_us_code(stock_code) or _is_hk_market(stock_code):
             return None
+        cache_key = f"fina:{stock_code}:{n}"
+        cached = self._fina_cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             from .realtime_types import safe_float
             ts_code = self._convert_stock_code(stock_code)
@@ -1279,20 +1333,26 @@ class TushareFetcher(BaseFetcher):
             prev = quarters[1] if len(quarters) > 1 else {}
             roe_now = latest.get("roe")
             roe_prev = prev.get("roe")
-            return {
+            payload = {
                 "latest": latest,
                 "trend": quarters,
                 "roe": roe_now,
                 "roe_trend": "up" if roe_now and roe_prev and roe_now > roe_prev else ("down" if roe_now and roe_prev and roe_now < roe_prev else "stable"),
             }
+            self._fina_cache_put(cache_key, payload, self._FINA_CACHE_TTL_SLOW_S)
+            return payload
         except Exception as e:
             logger.debug(f"Tushare fina_indicator 失败 {stock_code}: {e}")
             return None
 
     def get_margin_detail(self, stock_code: str, n: int = 5) -> Optional[Dict[str, Any]]:
-        """融资融券(margin_detail):融资余额/融券余额/5日变化。5000 积分。"""
+        """融资融券(margin_detail):融资余额/融券余额/5日变化。5000 积分。TTL 缓存 4h（T+1 晨更）。"""
         if _is_us_code(stock_code) or _is_hk_market(stock_code):
             return None
+        cache_key = f"margin:{stock_code}:{n}"
+        cached = self._fina_cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             from .realtime_types import safe_float
             ts_code = self._convert_stock_code(stock_code)
@@ -1316,13 +1376,15 @@ class TushareFetcher(BaseFetcher):
                 old = safe_float(df_sorted.iloc[min(n - 1, len(df_sorted) - 1)].get("rzye"))
                 if rzye is not None and old is not None:
                     rzye_change = rzye - old
-            return {
+            payload = {
                 "rzye": rzye,
                 "rqye": rqye,
                 "rzmre": safe_float(latest.get("rzmre")),
                 "rzye_change_5d": rzye_change,
                 "trade_date": str(latest.get("trade_date", "")),
             }
+            self._fina_cache_put(cache_key, payload, self._FINA_CACHE_TTL_DAILY_S)
+            return payload
         except Exception as e:
             logger.debug(f"Tushare margin_detail 失败 {stock_code}: {e}")
             return None
@@ -1331,10 +1393,16 @@ class TushareFetcher(BaseFetcher):
         """从 daily_basic 获取最新 PE/PB/市值(5000 积分,毫秒级响应)。
 
         用于补充 TickFlow 等不提供估值字段的实时行情数据源。
+        [personal patch] P1-B1：TTL 缓存 4h——daily_basic 收盘后更新，盘中本就
+        只反映昨日收盘估值，缓存不损失盘中语义。
         """
         from .realtime_types import safe_float
         if _is_us_code(stock_code) or _is_etf_code(stock_code) or _is_hk_market(stock_code):
             return None
+        cache_key = f"daily_basic:{stock_code}"
+        cached = self._fina_cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             ts_code = self._convert_stock_code(stock_code)
             df = self._call_api_with_rate_limit(
@@ -1344,12 +1412,14 @@ class TushareFetcher(BaseFetcher):
             if df is None or df.empty:
                 return None
             row = df.iloc[0]
-            return {
+            payload = {
                 "pe": safe_float(row.get("pe")),
                 "pb": safe_float(row.get("pb")),
                 "total_mv": safe_float(row.get("total_mv")),
                 "circ_mv": safe_float(row.get("circ_mv")),
             }
+            self._fina_cache_put(cache_key, payload, self._FINA_CACHE_TTL_DAILY_S)
+            return payload
         except Exception as e:
             logger.debug(f"Tushare daily_basic 失败 {stock_code}: {e}")
             return None

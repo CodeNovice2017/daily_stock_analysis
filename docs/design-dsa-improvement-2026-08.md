@@ -317,6 +317,33 @@ score >= 70 → 买入/加仓
 
 **验证**：`tests/agent/` 102 passed + backtest 108 passed = 195 passed，零回归。
 
+### 9.5 P1-B 数据层实施记录（2026-08-19）
+
+背景：五路探索（文献实证 / 量价 / 中长线因子 / 数据层 / 功能盲区）结论之一——数据层"日线/财报/资金流全裸奔、限频死配置、quant_data 断连"。拆为 B1-B5 五项，缓存范围由**缓存合理性矩阵**约束（用户确认）：
+
+| 数据类别 | 缓存策略 |
+| --- | --- |
+| 实时行情 | 永不缓存（已有动态 stale 机制） |
+| 日线 | 盘中=历史 bar 缓存+当日 bar 现拉；盘后=全量缓存（B2） |
+| 财报类（fina/forecast/margin/daily_basic） | 数据源非盘中实时，缓存与场景无关 |
+| 盘中资金流快照 / 选股实时排名 | 明确不缓存 |
+
+**B1 财报 TTL 缓存**（已完成，`data_provider/tushare_fetcher.py`）：
+- 实例级 `_fina_cache` + get/put 助手；fina_indicator/forecast TTL 24h，margin_detail/daily_basic_valuation TTL 4h
+- key 含参数（`fina:{code}:{n}`）；失败/空结果不缓存；512 条硬上限（先清过期，仍超限按最近过期淘汰）
+- code review 修订：容量护栏从"只清过期"改为真硬上限（screener 扫全市场、条目全新鲜时原实现无界增长）
+
+**B3 限频修复**（已完成，同文件 + `src/config.py` + 三个实例化点）：
+- `_check_rate_limit` 计数器改为类级共享（`_shared_*` + `threading.Lock`），修 manager/intraday/ml_agent 各建实例导致配额预算 ×3 的漏洞；锁内检查计数、锁外 sleep
+- `TUSHARE_RATE_LIMIT_PER_MINUTE` 环境变量（默认 80，5000 积分放宽至 300）透传 `data_provider/base.py` / `src/intraday/data_fetcher.py` / `src/ml_agent/screener/data_provider.py`
+
+**待办**：
+- B2 日线缓存——铁律：**盘中分析不能吃缓存价格数据**，历史 bar 可缓存、当日 bar 盘中必须现拉，用 `src/core/trading_calendar.py` 的 `MarketPhaseContext.is_partial_bar` 守门
+- B4 quant_data parquet 接入——`data/quant/`（1.6G parquet+duckdb）给 `get_daily_data` 加只读源，只覆盖历史 bar
+- B5 rt_k 静默禁用——5000 积分无该接口权限，反复重试浪费
+
+**验证**：`tests/test_tushare_fina_cache.py` 8 passed（含硬上限/假时钟超限重试用例）；`ci_gate.sh` 全量离线套件 5911 passed / 38 failed，失败集与干净 HEAD c0e31a27（隔离 worktree 对照）逐条一致——全部为存量问题：①pipeline news_context Tushare 补充数据路径的 MagicMock 格式化测试债 15 例；②本地 .env LLM 渠道配置泄漏进 system_config 测试 14 例；③fake-ip 环境 SSRF 用例 4 例；④env.example/requirements 本地漂移 2 例。本改动零新增失败。
+
 ### 9.4 下一步（P1，待 P0 观察一两周后）
 
 - P1-1 回测聚合摘要注入（FinMem 式："本股历史 N 次判断 X 对，看多 M 次全对"）——注意只注入聚合统计不注入逐条叙事

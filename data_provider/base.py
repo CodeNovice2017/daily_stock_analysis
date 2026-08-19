@@ -1177,7 +1177,9 @@ class DataFetcherManager:
 
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
         if tushare_token:
-            optional_fetchers.append(TushareFetcher())  # 会根据 Token 配置自动调整优先级
+            # [personal patch] P1-B3：透传限频配置（此前死配置恒为默认 80）
+            tushare_rate_limit = getattr(config, "tushare_rate_limit_per_minute", 80)
+            optional_fetchers.append(TushareFetcher(rate_limit_per_minute=tushare_rate_limit))  # 会根据 Token 配置自动调整优先级
         else:
             logger.debug("[数据源初始化] 跳过未配置的 TushareFetcher")
 

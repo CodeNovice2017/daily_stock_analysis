@@ -1260,7 +1260,8 @@ class Config:
     akshare_sleep_min: float = 2.0
     akshare_sleep_max: float = 5.0
     
-    # Tushare 每分钟最大请求数（免费配额）
+    # Tushare 每分钟最大请求数（免费配额；5000 积分实际可更高）
+    # [personal patch] P1-B3：透传至 TushareFetcher（此前为死配置）
     tushare_rate_limit_per_minute: int = 80
     
     # 重试配置
@@ -1792,6 +1793,11 @@ class Config:
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
+            # [personal patch] P1-B3：Tushare 限频透传（5000 积分可放宽）
+            tushare_rate_limit_per_minute=parse_env_int(
+                os.getenv('TUSHARE_RATE_LIMIT_PER_MINUTE'), 80,
+                field_name='TUSHARE_RATE_LIMIT_PER_MINUTE', minimum=10,
+            ),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             tickflow_kline_adjust=normalize_tickflow_kline_adjust(os.getenv('TICKFLOW_KLINE_ADJUST')),
             tickflow_priority=parse_env_int(os.getenv('TICKFLOW_PRIORITY'), 2, field_name='TICKFLOW_PRIORITY', minimum=0),

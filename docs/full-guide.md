@@ -167,6 +167,7 @@ daily_stock_analysis/
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | 是否在 `SEARXNG_BASE_URLS` 为空时自动从 `searx.space` 获取公共实例（默认 `true`） | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空（或未设置/空白）时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填写 `http://` 或 `https://` 开头的完整地址 | 可选 |
+| `TUSHARE_RATE_LIMIT_PER_MINUTE` | Tushare 每分钟最大请求数；默认 `80`（免费配额），5000 积分账号可放宽至 200-500；所有 TushareFetcher 实例共享同一配额预算 | 可选 |
 | `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；失败或权限不足时自动回退。 | 可选 |
 | `LONGBRIDGE_OAUTH_CLIENT_ID` | [Longbridge OpenAPI](https://open.longbridge.com/) OAuth client_id；留空且无 Legacy Access Token 时会兼容使用 `LONGBRIDGE_APP_KEY` | 可选 |
 | `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` | OAuth token 缓存文件的 base64 内容，供 GitHub Actions / Docker 等 headless 环境恢复 SDK token 缓存 | 可选 |
@@ -417,6 +418,7 @@ daily_stock_analysis/
 |--------|------|--------|:----:|
 | `TUSHARE_TOKEN` | Tushare Pro Token | - | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填 `http://` 或 `https://` 开头的完整地址 | `http://api.tushare.pro` | 可选 |
+| `TUSHARE_RATE_LIMIT_PER_MINUTE` | Tushare 每分钟最大请求数；所有 TushareFetcher 实例共享同一配额预算 | `80` | 可选 |
 | `TICKFLOW_API_KEY` | TickFlow API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；失败或权限不足时自动回退。 | - | 可选 |
 | `TICKFLOW_PRIORITY` | TickFlow 日 K 数据源优先级；数字越小越早尝试，默认 `2`；未配置 API Key 时不启用；不影响实时行情，实时行情顺序由 `REALTIME_SOURCE_PRIORITY` 控制。 | `2` | 可选 |
 | `TENCENT_PRIORITY` | 腾讯直连 A 股日 K 数据源优先级；数字越小越早尝试，默认 `5`，作为 Efinance、AkShare、Tushare、TickFlow、PyTDX、Baostock 和 YFinance 之后的最终兜底；不影响实时行情。 | `5` | 可选 |
