@@ -21,7 +21,7 @@ import pandas as pd
 
 from .data_provider import MLDataProvider
 from .filters import ScreenResult, filter_hard, filter_trend
-from .scorer import score_stock
+from .scorer import compute_sue, score_stock
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,23 @@ class MLScreener:
         except Exception:
             surv_flag = False
 
+        # [personal patch] P2 实证因子：SUE / 现金流实现率 / 残差动量基准。
+        # 只在过筛后的评分阶段拉取（ finalists 才付出配额成本），全部
+        # best-effort：任一获取失败按缺省处理，不阻断评分。
+        try:
+            single_q = dp.get_single_quarter_profits(code)
+            sue = compute_sue(single_q) if single_q else None
+        except Exception:
+            sue = None
+        try:
+            cash_ratio = dp.get_cashflow_ratio(code)
+        except Exception:
+            cash_ratio = None
+        try:
+            index_df = dp.get_index_daily()
+        except Exception:
+            index_df = None
+
         return score_stock(
             code=code,
             name=name,
@@ -228,6 +245,9 @@ class MLScreener:
             holder_trade=holder_trade,
             hk_hold_change=hk_change,
             surv_flag=surv_flag,
+            sue=sue,
+            cash_ratio=cash_ratio,
+            index_df=index_df,
         )
 
     def get_stats(self) -> Dict[str, int]:

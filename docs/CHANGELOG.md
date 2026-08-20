@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] Web 设置注册表补登记 `BACKTEST_MISSED_BULL_PCT`（观望计分阈值，此前仅在 .env.example 生效未进设置页）；测试侧修复 15 个 pipeline 用例因 MagicMock 数据源管理器泄漏进 Tushare 补充数据格式化路径而失败的问题（显式置空 `_fetchers_by_name` 使其按"未配置"跳过），并新增该补充数据块的正向覆盖用例。
 - [改进] `get_volume_analysis` 量价工具升级：修复量价相关系数被价格趋势主导的缺陷（改为成交量 vs 当日涨跌幅相关）；新增 250 日量能分位（地量/天量）、OBV 顶/底背离（2% 阈值）、放量突破 vs 高位滞涨出货判别（60 日新高 + 1.5× 均量 + 阳线 + 收盘区间位置）、量价形态叠加低/中/高位位置维度；executor/TechnicalAgent 提示词同步更新。
 - [新功能] 新增 `scripts/run_outcome_backfill.py` 复盘回填入口：增量评估决策信号与 Skill 观点的方向对错（hit/miss/neutral）并输出分策略命中率统计，支持 `--stats` 只读模式，供定时任务或手动执行。
+- [改进] 中长线选股引擎 P2 因子修订（实证依据见 `docs/design-medium-long-term-module.md` §9）：成长维新增 SUE 盈余惊喜主因子（时序口径 10 分）；趋势维新增残差动量（对沪深300回归残差的年化 Sharpe，9 分，修正 A 股价格动量为负的实证缺陷）；质量维新增现金流实现率子因子（经营现金流/净利润 5 分）；估值 20→12 降权（弱因子）。新数据源仅在过筛后评分阶段拉取，指数日线全流程缓存一次。
 
 ## [3.30.0] - 2026-08-09
 

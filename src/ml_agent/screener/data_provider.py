@@ -36,6 +36,8 @@ class MLDataProvider:
             self._fetcher = TushareFetcher(rate_limit_per_minute=rate_limit)
         if self._fetcher._api is None:
             raise RuntimeError("TushareFetcher 未初始化，请检查 TUSHARE_TOKEN")
+        # [personal patch] P2：指数日线实例级缓存（残差动量基准，全流程拉一次）
+        self._index_daily_cache: Optional[pd.DataFrame] = None
 
     @property
     def fetcher(self) -> TushareFetcher:
@@ -154,6 +156,107 @@ class MLDataProvider:
 
         except Exception as e:
             logger.debug(f"[ML-Data] fina_indicator 扩展获取失败 {code}: {e}")
+            return None
+
+    def get_index_daily(self, days: int = 300) -> Optional[pd.DataFrame]:
+        """基准指数日线（沪深300），实例级缓存——整个筛选流程只拉一次。
+
+        [personal patch] P2：残差动量需要市场基准；返回 date/close 列，
+        date 为 datetime 类型，与个股日线按日期对齐。
+        """
+        if self._index_daily_cache is not None:
+            return self._index_daily_cache
+        try:
+            df = self._fetcher._call_api_with_rate_limit(
+                "index_daily",
+                ts_code="000300.SH",
+                start_date=(datetime.now() - timedelta(days=int(days * 1.8) + 15)).strftime("%Y%m%d"),
+                end_date=datetime.now().strftime("%Y%m%d"),
+                fields="ts_code,trade_date,close",
+            )
+            if df is None or df.empty:
+                return None
+            df = df.sort_values("trade_date").reset_index(drop=True)
+            df = df.rename(columns={"trade_date": "date"})
+            df["date"] = pd.to_datetime(df["date"])
+            self._index_daily_cache = df
+            return df
+        except Exception as e:
+            logger.debug(f"[ML-Data] 指数日线获取失败: {e}")
+            return None
+
+    def get_single_quarter_profits(self, code: str, n_periods: int = 10) -> Optional[List[float]]:
+        """单季净利润序列（时间升序），由累计值差分而来。
+
+        [personal patch] P2：时序 SUE 需要 5-9 期单季净利润；
+        income 接口的 n_income 为年初至今累计值，Q2=H1-Q1 依此差分。
+        """
+        ts_code = self._fetcher._convert_stock_code(code)
+        try:
+            df = self._fetcher._call_api_with_rate_limit(
+                "income",
+                ts_code=ts_code,
+                fields="ts_code,end_date,n_income",
+            )
+            if df is None or df.empty:
+                return None
+            df = df.sort_values("end_date").reset_index(drop=True)
+            quarters: List[float] = []
+            prev_end: Optional[str] = None
+            prev_cum: Optional[float] = None
+            for _, r in df.iterrows():
+                end = str(r.get("end_date", ""))
+                cum = safe_float(r.get("n_income"))
+                if prev_end is None or prev_cum is None:
+                    quarters.append(cum)
+                else:
+                    # 同年后一期 = 累计差分；新一年的 Q1（0331）本身就是单季
+                    if end[4:6] == "03":
+                        quarters.append(cum)
+                    else:
+                        quarters.append(cum - prev_cum)
+                prev_end, prev_cum = end, cum
+                if len(quarters) >= n_periods:
+                    break
+            return quarters if len(quarters) >= 5 else None
+        except Exception as e:
+            logger.debug(f"[ML-Data] 单季净利序列获取失败 {code}: {e}")
+            return None
+
+    def get_cashflow_ratio(self, code: str) -> Optional[float]:
+        """现金流实现率：最近报告期 经营现金流累计 / 净利润累计。
+
+        [personal patch] P2：Sloan 应计异象的镜像——利润是否有现金背书。
+        亏损时净利 ≤ 0 无法计算有意义的比率，返回 None（不计分不惩罚）。
+        """
+        ts_code = self._fetcher._convert_stock_code(code)
+        try:
+            df_cf = self._fetcher._call_api_with_rate_limit(
+                "cashflow", ts_code=ts_code,
+                fields="ts_code,end_date,n_cashflow_act",
+            )
+            if df_cf is None or df_cf.empty:
+                return None
+            latest_cf = df_cf.sort_values("end_date", ascending=False).iloc[0]
+            end_date = str(latest_cf.get("end_date", ""))
+            ocf = safe_float(latest_cf.get("n_cashflow_act"))
+            if not end_date:
+                return None
+            df_inc = self._fetcher._call_api_with_rate_limit(
+                "income", ts_code=ts_code,
+                fields="ts_code,end_date,n_income",
+            )
+            if df_inc is None or df_inc.empty:
+                return None
+            inc_rows = df_inc[df_inc["end_date"] == end_date]
+            if inc_rows.empty:
+                return None
+            ni = safe_float(inc_rows.iloc[0].get("n_income"))
+            if ni <= 0:
+                return None
+            return ocf / ni
+        except Exception as e:
+            logger.debug(f"[ML-Data] 现金流实现率获取失败 {code}: {e}")
             return None
 
     def get_financial_statements(self, code: str, n: int = 4) -> Optional[Dict[str, Any]]:
