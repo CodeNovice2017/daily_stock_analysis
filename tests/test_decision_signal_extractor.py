@@ -12,6 +12,7 @@ from src.config import Config
 from src.services.decision_signal_extractor import (
     build_decision_signal_payload_from_report,
     extract_and_persist_from_analysis_result,
+    resolve_decision_signal_action_fields,
 )
 from src.services.decision_signal_service import DecisionSignalService
 from src.storage import DatabaseManager
@@ -445,7 +446,9 @@ def test_build_payload_reuses_shared_sniper_fallback_paths(isolated_db) -> None:
 
 
 def test_build_payload_skips_ambiguous_action_non_stock_and_unknown_market() -> None:
-    ambiguous = _result(operation_advice="买盘增强，继续观察", action=None)
+    # [personal patch] P1-C：显式决策链（action/dashboard.action/
+    # risk_control.post_risk_signal/decision_type）都缺席时，歧义文案才跳过。
+    ambiguous = _result(operation_advice="买盘增强，继续观察", action=None, decision_type=None)
     assert build_decision_signal_payload_from_report(
         ambiguous,
         trace_id="trace-1",
@@ -462,6 +465,49 @@ def test_build_payload_skips_ambiguous_action_non_stock_and_unknown_market() -> 
         report_type="market_review",
         profile_source=BUILD_PROFILE_SOURCE,
     ) is None
+
+
+def test_resolver_explicit_decision_chain_recovers_risk_downgraded_reports() -> None:
+    """[personal patch] P1-C 回归：风控降级报告不得因复合文案歧义丢失信号。
+
+    2026-08-18~20 期间 "减仓/卖出（原建议已被风控下调）" 同时命中
+    reduce/sell 被判歧义，风控降级报告全部未进入复盘库。
+    """
+    # 1) dashboard.action（新运行的 orchestrator 在风控降级时写入）
+    r1 = _result(
+        operation_advice="减仓/卖出（原建议已被风控下调）",
+        action=None,
+        decision_type=None,
+        sentiment_score=36,
+    )
+    r1.dashboard = {"action": "sell"}
+    assert resolve_decision_signal_action_fields(r1, report_type="simple")["action"] == "sell"
+
+    # 2) 旧记录回退 risk_control.post_risk_signal（action 键写入前的存量）
+    r2 = _result(
+        operation_advice="减仓/卖出（原建议已被风控下调）",
+        action=None,
+        decision_type=None,
+        sentiment_score=36,
+    )
+    r2.dashboard = {"risk_control": {"applied": True, "post_risk_signal": "sell"}}
+    assert resolve_decision_signal_action_fields(r2, report_type="simple")["action"] == "sell"
+
+    # 3) agent 原生决策：多情景作战计划（买入+减仓并存，文案天然歧义）时
+    #    以 decision_type 兜底
+    r3 = _result(
+        operation_advice="【空仓者】回踩企稳可轻仓试探买入；【持仓者】反抽减仓，击穿支撑执行离场",
+        action=None,
+        decision_type="sell",
+        sentiment_score=36,
+    )
+    r3.dashboard = {}
+    assert resolve_decision_signal_action_fields(r3, report_type="simple")["action"] == "sell"
+
+    # 4) risk_control 未应用时不得读取 post_risk_signal
+    r4 = _result(operation_advice="买盘增强，继续观察", action=None, decision_type=None)
+    r4.dashboard = {"risk_control": {"applied": False, "post_risk_signal": "sell"}}
+    assert resolve_decision_signal_action_fields(r4, report_type="simple")["action"] is None
 
     unknown_market = _result(code="UNKNOWN", operation_advice="买入", action="buy")
     assert build_decision_signal_payload_from_report(

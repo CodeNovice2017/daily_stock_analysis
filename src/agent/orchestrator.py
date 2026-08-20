@@ -1568,6 +1568,11 @@ class AgentOrchestrator:
                     pre_risk_sentiment_score,
                 ),
             }
+            # [personal patch] P1-C 修复:风控降级后的权威动作落入机器可读的 action 键。
+            # 此前降级只改写 operation_advice 文案（"减仓/卖出（原建议已被风控下调）"），
+            # 该复合文案同时命中 reduce/sell 两个动作，DecisionSignal 提取器解析为
+            # None → 2026-08-18 起所有风控降级报告都静默丢失复盘样本。
+            dashboard_block["action"] = decision_type
 
         key_points = payload.get("key_points")
         if not isinstance(key_points, list) or not key_points:

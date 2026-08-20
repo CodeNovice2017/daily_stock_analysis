@@ -187,15 +187,44 @@ def resolve_decision_signal_action_fields(
         score=score,
         raw_action=raw_action,
     )
-    return build_action_fields(
+    # [personal patch] P1-C 修复:显式动作的取值与 pipeline 的
+    # populate_decision_action_fields 对齐——result.action 为空时回退
+    # dashboard.action（风控降级路径在此写入权威动作），再退到建议文案
+    # 解析。避免"减仓/卖出（原建议已被风控下调）"这类复合文案因同时命中
+    # reduce/sell 被判歧义而丢失信号。旧记录（action 键写入前）再回退
+    # risk_control.post_risk_signal，保证历史降级样本可回填复盘。
+    explicit_action = getattr(result, "action", None)
+    if not str(explicit_action or "").strip():
+        explicit_action = dashboard.get("action")
+    if not str(explicit_action or "").strip():
+        risk_control = _as_mapping(dashboard.get("risk_control"))
+        if risk_control.get("applied"):
+            explicit_action = risk_control.get("post_risk_signal")
+    fields = build_action_fields(
         operation_advice=getattr(result, "operation_advice", None),
-        explicit_action=getattr(result, "action", None),
+        explicit_action=explicit_action,
         report_type=report_type,
         report_language=getattr(result, "report_language", None),
         sentiment_score=score,
         guardrail_reason=guardrail_reason,
         align_with_score=True,
     )
+    if fields["action"] is None:
+        # 文案解析失败（歧义/无动作词，如多情景自由文本作战计划）时，最后
+        # 回退 agent 的规范决策枚举（decision_type）。注意：仅作兜底而非
+        # 覆盖源——文案中的"持有/观望"保守偏好规则必须保持优先。
+        decision_type = getattr(result, "decision_type", None)
+        if str(decision_type or "").strip():
+            fields = build_action_fields(
+                operation_advice=getattr(result, "operation_advice", None),
+                explicit_action=decision_type,
+                report_type=report_type,
+                report_language=getattr(result, "report_language", None),
+                sentiment_score=score,
+                guardrail_reason=guardrail_reason,
+                align_with_score=True,
+            )
+    return fields
 
 
 def extract_and_persist_from_analysis_result(
