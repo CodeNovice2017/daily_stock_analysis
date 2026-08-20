@@ -39,6 +39,9 @@ def _run_backfill(limit: int = 500) -> int:
 
 
 def _print_stats() -> int:
+    # 注：这里绕过 repository 层直接读 sqlite 做只读统计——查的是 outcomes
+    # 聚合而非业务写入，避免为统计脚本引入完整 repo 依赖；若
+    # decision_signal_outcomes / skill_opinion_outcomes 表结构变更，需同步此处。
     from src.config import get_config
 
     conn = sqlite3.connect(get_config().database_path)

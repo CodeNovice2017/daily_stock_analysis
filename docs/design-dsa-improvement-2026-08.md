@@ -348,7 +348,7 @@ score >= 70 → 买入/加仓
 
 **P1-A**（`src/agent/tools/analysis_tools.py` 的 `get_volume_analysis`）：
 - 修复 `volume_price_corr`：旧实现 corr(量, 价格水平) 在趋势市被单调漂移主导（量测时间位置而非量价互动）；改为 corr(量, 当日涨跌幅)，涨跌幅方差为 0 时输出 None 而非伪相关
-- 新增信号：250 日量能分位（<20% 地量 / >90% 天量，参考窗口最多取 260 日）；OBV 顶/底背离（价新高/新低而 OBV 差 2% 未同步）；放量突破 vs 高位滞涨出货（60 日新高 + ≥1.5×20日均量 + 阳线 + 收盘位于当日区间上/下 40%）
+- 新增信号：250 日量能分位（<20% 地量 / >90% 天量，参考窗口最多取 260 日）；OBV 顶/底背离（120 日窗口，价新高/新低而 OBV 滞后超过窗口区间的 2%——绝对差值口径，OBV 为带符号累积量不能对值做乘法百分比）；放量突破 vs 高位滞涨出货（60 日新高 + ≥1.5×20日均量 + 阳线 + 收盘位于当日区间上/下 40%，一字板按前收方向定位）
 - `pattern` 叠加位置维度（60 日区间低/中/高位前缀）
 - 新键均为条件输出（无信号不占载荷），旧键全部保留
 - 测试 `tests/test_volume_analysis_tool.py` 15 用例；executor 四处提示词 + TechnicalAgent workflow 同步
@@ -359,6 +359,10 @@ score >= 70 → 买入/加仓
 - Skill 观点首次评估 500 键：**已判定 61 条 = 21 对 / 40 错（命中率 34%）**——box_oscillation 7/19、bull_trend 5/13、shrink_pullback 6/19、ma_golden_cross 1/6、growth_quality 2/3、volume_breakout 0/1
 - 解读：方向判断命中率显著低于 50%，与"文献实证"结论一致（多数 LLM agent 跑不赢规则）；这正是三层架构（规则择时 + LLM 定性确认）路线的实证依据，后续权重修订应以此为基线对照
 - 待办：Alerts 规则迁移到当前持仓（需用户确认价位）、Screening 定期化
+
+**测量协议重置（2026-08-20，用户决策）**：上述历史命中率混合了早期模型/旧版本策略的判断，不作为今后对照基线。已整库备份至 `data/stock_analysis.db.bak-20260820-pre-reset` 后清空四张预测表（decision_signals / decision_signal_outcomes / skill_opinion_samples / skill_opinion_outcomes），**正式回测自 2026-08-20 起从零积累**，由每日 19:11 复盘任务自动判分。历史数字（信号 3对/5错/1平、策略 21/61）仅作背景参考。
+
+**9.6 复审修订（2026-08-20，两轴 code review 后）**：抓出并修复 ①OBV 背离两处数学缺陷——负值基线下乘法阈值方向反转（同步破位被误判底背离）+ 窗口起点 NaN 基点 0 成为伪极大值（任何负 OBV 被误判顶背离），改为窗口区间 2% 绝对差值并剔除首行伪基点，补 2 个负值基线回归用例；②一字板（high==low）被误判"出货嫌疑"，按前收方向定位；③executor 四处提示词实际只改了两处（另两处文案不同未被 replace 命中），补齐；④`volume_price_corr_note` 改条件输出。已知结构债（暂不动）：`_handle_get_volume_analysis` 约 190 行待拆分、backfill 脚本绕过 repository 层直查 sqlite（只读统计，已注释声明）。
 
 ### 9.4 下一步（P1，待 P0 观察一两周后）
 

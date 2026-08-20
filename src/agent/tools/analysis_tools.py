@@ -278,22 +278,33 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     else:
         vol_pctile, vol_pctile_label, vol_pctile_window = None, None, 0
 
-    # 2) OBV 背离：价新高/新低而 OBV 未同步（相差>2%）
+    # 2) OBV 背离：价新高/新低而 OBV 未同步（滞后超过窗口区间的 2%）
+    # 注意 OBV 是从 0 起算的带符号累积量，常为负值，阈值必须用窗口区间的
+    # 绝对差值（max-min）衡量，不能对 OBV 值本身做乘法百分比——负值区乘法
+    # 阈值方向反转，会把"同步破位"误判为背离。
     obv_divergence = None
     obv_note = None
     obv_ref = df_full.tail(120)
     if len(obv_ref) >= 40:
         _sign = obv_ref["close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
-        obv = (_sign * obv_ref["volume"]).cumsum()
+        # 首行 diff 为 NaN → 记 0，成为窗口起点的伪基点；cumsum 后剔除该行，
+        # 否则"OBV 未同步创新高"会拿这个伪极值当参照，负 OBV 恒被误判顶背离。
+        obv = (_sign * obv_ref["volume"]).cumsum().iloc[1:]
         _c = obv_ref["close"]
-        if _c.iloc[-1] >= _c.max() * 0.98 and obv.iloc[-1] < obv.max() * 0.98:
-            obv_divergence = "bearish"
-            obv_note = "价格创/接近日内窗口新高，但OBV未同步创新高（顶背离，量能未确认）"
-        elif _c.iloc[-1] <= _c.min() * 1.02 and obv.iloc[-1] > obv.min() * 1.02:
-            obv_divergence = "bullish"
-            obv_note = "价格创/接近新低，但OBV未同步创新低（底背离，下跌量能衰竭）"
+        _obv_range = float(obv.max() - obv.min())
+        if _obv_range > 0:
+            _lag = 0.02 * _obv_range
+            if _c.iloc[-1] >= _c.max() * 0.98 and float(obv.iloc[-1]) < float(obv.max()) - _lag:
+                obv_divergence = "bearish"
+                obv_note = "价格创/接近 120 日窗口新高，但OBV未同步创新高（顶背离，量能未确认）"
+            elif _c.iloc[-1] <= _c.min() * 1.02 and float(obv.iloc[-1]) > float(obv.min()) + _lag:
+                obv_divergence = "bullish"
+                obv_note = "价格创/接近 120 日窗口新低，但OBV未同步创新低（底背离，下跌量能衰竭）"
 
     # 3) 突破/出货判别：60日新高 + 1.5×均量 + 阳线 + 收盘位于当日区间上40%
+    # 一字板（high==low）无日内区间：按相对前收的方向定位——一字涨停视为
+    # 最强收盘（pos=1.0），一字跌停视为最弱（pos=0.0），避免放量一字涨停
+    # 因 close==open 被误判为"出货嫌疑"。
     breakout_assessment = None
     breakout_detail = {}
     if has_ohlc and len(df_full) >= 21:
@@ -302,8 +313,17 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
         at_new_high = float(close.iloc[-1]) > prior_high
         vol_ok = latest_vol >= 1.5 * avg_vol_20 if avg_vol_20 > 0 else False
         day_range = float(_h.iloc[-1] - _l.iloc[-1])
-        close_pos = round((float(close.iloc[-1]) - float(_l.iloc[-1])) / day_range, 2) if day_range > 0 else None
-        bull_candle = float(close.iloc[-1]) > float(_o.iloc[-1])
+        _close_now, _open_now = float(close.iloc[-1]), float(_o.iloc[-1])
+        if day_range > 0:
+            close_pos = round((_close_now - float(_l.iloc[-1])) / day_range, 2)
+            bull_candle = _close_now > _open_now
+        elif len(close) >= 2:
+            _prev_close = float(close.iloc[-2])
+            close_pos = 1.0 if _close_now > _prev_close else 0.0
+            bull_candle = _close_now > _prev_close
+        else:
+            close_pos = None
+            bull_candle = _close_now > _open_now
         breakout_detail = {
             "at_60d_high": bool(at_new_high),
             "volume_vs_20d_avg": vol_ratio_20d,
@@ -357,10 +377,13 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
         "volume_trend_pct": vol_trend_pct,
         "high_volume_days": high_vol_days,
         "volume_price_corr": vp_corr,
-        "volume_price_corr_note": "成交量与当日涨跌幅的相关系数（正=量能确认走势，负=量价反向）；已修复旧版与价格水平相关被趋势主导的缺陷",
         "pattern": pattern,
     }
     # 新信号仅在有效时输出，保持载荷精简
+    if vp_corr is not None:
+        result["volume_price_corr_note"] = (
+            "成交量与当日涨跌幅的相关系数（正=量能确认走势，负=量价反向）"
+        )
     if vol_pctile is not None:
         result["volume_percentile"] = vol_pctile
         result["volume_percentile_label"] = vol_pctile_label

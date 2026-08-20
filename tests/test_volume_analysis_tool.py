@@ -136,6 +136,45 @@ class TestObvDivergence:
         result = _run(_mk_df(closes, vols))
         assert result.get("obv_divergence") is None
 
+    def test_no_bullish_divergence_when_obv_syncs_at_new_low_negative_baseline(self):
+        # 回归锚点：OBV 为负的基线下，价格与 OBV 同日创新低（同步破位，
+        # 背离的反面）不得误判为底背离。旧乘法阈值 min*1.02 在负值区
+        # 方向反转，-500 > -510 恒真导致误报。
+        closes, vols = [], []
+        px = 10.0
+        for i in range(121):
+            if i % 2 == 0:
+                px *= 0.98
+                vols.append(300.0)  # 下跌日放量 → OBV 深度为负
+            else:
+                px *= 0.995
+                vols.append(100.0)
+            closes.append(px)
+        # 收尾构造：最后一日继续下跌，价格与 OBV 同创窗口新低
+        closes[-1] = closes[-2] * 0.98
+        vols[-1] = 300.0
+        result = _run(_mk_df(closes, vols))
+        assert result.get("obv_divergence") is None
+
+    def test_no_bearish_divergence_when_obv_syncs_at_new_high_negative_baseline(self):
+        # 回归锚点：OBV 净额为负但随价格单调回升并同创窗口新高（同步），
+        # 不得误判顶背离。旧实现两处缺陷在此叠加：乘法阈值 max*0.98 在
+        # 负值区方向反转 + 窗口起点 NaN 基点 0 成为伪极大值。
+        closes, vols = [], []
+        px = 10.0
+        for i in range(50):
+            px *= 0.995  # 前段轻量阴跌
+            closes.append(px)
+            vols.append(100.0)
+        base = px
+        for i in range(70):
+            px = base * (1.008 ** (i + 1))  # 后段重度回升收复并创新高
+            closes.append(px)
+            vols.append(71.0)  # 净额仍微负（-5000+4970），OBV 单调升并收于窗口最高
+        result = _run(_mk_df(closes, vols))
+        # 价格窗口新高、OBV 同步窗口新高（尽管绝对值为负）→ 无背离
+        assert result.get("obv_divergence") is None
+
 
 class TestBreakoutAssessment:
     def _base(self):
@@ -179,6 +218,17 @@ class TestBreakoutAssessment:
         closes, vols = self._base()
         result = _run(_mk_df(closes, vols))
         assert result.get("breakout_assessment") is None
+
+    def test_limit_up_board_counts_as_valid_breakout(self):
+        # 回归锚点：一字涨停（high==low）无日内区间，按相对前收方向定位
+        # 为最强收盘——放量一字板是真突破，不得因 close==open 误判"出货嫌疑"
+        closes, vols = self._base()
+        closes[-1] = 11.0
+        highs = [max(a, b) * 1.002 for a, b in zip(closes, closes)][:-1] + [11.0]
+        lows = [min(a, b) * 0.998 for a, b in zip(closes, closes)][:-1] + [11.0]
+        result = _run(_mk_df(closes, vols[:-1] + [500.0], highs=highs, lows=lows))
+        assert result["breakout_assessment"].startswith("放量突破")
+        assert result["breakout_detail"]["close_position_in_range"] == 1.0
 
 
 class TestPatternPosition:
