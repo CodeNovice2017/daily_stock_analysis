@@ -208,12 +208,14 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     from src.services.history_loader import load_history_df
     import pandas as pd
 
-    df, source = load_history_df(stock_code, days=max(days + 20, 60))
+    # [personal patch] P1-A:多取 260 日参考窗口（250日量能分位/OBV/位置维度用），
+    # 分析窗口仍为 days；load_history_df DB 优先，多取不增加网络成本。
+    df_full, source = load_history_df(stock_code, days=max(days + 20, 60, 260))
 
-    if df is None or df.empty:
+    if df_full is None or df_full.empty:
         return {"error": f"No historical data for {stock_code}"}
 
-    df = df.tail(days).copy()
+    df = df_full.tail(days).copy()
     if len(df) < 5:
         return {"error": f"Insufficient data for volume analysis (got {len(df)} days, need >= 5)"}
 
@@ -231,11 +233,17 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     # Price direction for each day
     price_up = close.diff() > 0  # True = up day
 
-    # Volume-price correlation (last N days)
+    # [personal patch] P1-A 修复:量价相关改为「成交量 vs 当日涨跌幅」。
+    # 旧实现 corr(volume, close价格水平) 在趋势市被价格的单调漂移主导，
+    # 量测的是时间位置而非量价互动；改为与 pct_change 相关后，
+    # 正值=放量大动/缩量小动（走势被量能确认），负值=量能与大动反向。
     try:
-        import numpy as np
-        vp_corr = float(pd.Series(volume.values, dtype=float).corr(pd.Series(close.values, dtype=float)))
-        vp_corr = round(vp_corr, 3)
+        _ret = close.pct_change()
+        _valid = _ret.notna() & volume.notna()
+        if int(_valid.sum()) >= 5 and float(volume[_valid].std() or 0) > 0 and float(_ret[_valid].std() or 0) > 0:
+            vp_corr = round(float(volume[_valid].corr(_ret[_valid])), 3)
+        else:
+            vp_corr = None
     except Exception:
         vp_corr = None
 
@@ -258,20 +266,83 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     # High-volume days (> 2x 20d avg)
     high_vol_days = int((volume > avg_vol_20 * 2).sum()) if avg_vol_20 > 0 else 0
 
-    # Volume-price pattern interpretation
-    pattern = "未知"
-    if avg_up_vol > avg_down_vol * 1.3:
-        pattern = "量价配合良好（上涨放量、下跌缩量）"
-    elif avg_down_vol > avg_up_vol * 1.3:
-        pattern = "量价背离（下跌放量、上涨缩量，偏空）"
-    elif vol_ratio_5d and vol_ratio_5d > 1.5:
-        pattern = "近期明显放量"
-    elif vol_ratio_5d and vol_ratio_5d < 0.6:
-        pattern = "近期明显缩量"
-    else:
-        pattern = "量价关系中性"
+    # ── [personal patch] P1-A 新信号 ────────────────────────────────────
+    has_ohlc = all(c in df_full.columns for c in ("open", "high", "low"))
 
-    return {
+    # 1) 250日量能分位：地量(<20%)/天量(>90%)
+    ref_vol = df_full["volume"].tail(250).dropna()
+    if len(ref_vol) >= 60 and latest_vol > 0:
+        vol_pctile = round(float((ref_vol < latest_vol).mean() * 100), 1)
+        vol_pctile_label = "地量" if vol_pctile < 20 else "天量" if vol_pctile > 90 else "中性"
+        vol_pctile_window = int(len(ref_vol))
+    else:
+        vol_pctile, vol_pctile_label, vol_pctile_window = None, None, 0
+
+    # 2) OBV 背离：价新高/新低而 OBV 未同步（相差>2%）
+    obv_divergence = None
+    obv_note = None
+    obv_ref = df_full.tail(120)
+    if len(obv_ref) >= 40:
+        _sign = obv_ref["close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+        obv = (_sign * obv_ref["volume"]).cumsum()
+        _c = obv_ref["close"]
+        if _c.iloc[-1] >= _c.max() * 0.98 and obv.iloc[-1] < obv.max() * 0.98:
+            obv_divergence = "bearish"
+            obv_note = "价格创/接近日内窗口新高，但OBV未同步创新高（顶背离，量能未确认）"
+        elif _c.iloc[-1] <= _c.min() * 1.02 and obv.iloc[-1] > obv.min() * 1.02:
+            obv_divergence = "bullish"
+            obv_note = "价格创/接近新低，但OBV未同步创新低（底背离，下跌量能衰竭）"
+
+    # 3) 突破/出货判别：60日新高 + 1.5×均量 + 阳线 + 收盘位于当日区间上40%
+    breakout_assessment = None
+    breakout_detail = {}
+    if has_ohlc and len(df_full) >= 21:
+        _o, _h, _l = df_full["open"], df_full["high"], df_full["low"]
+        prior_high = float(_h.iloc[:-1].tail(60).max())
+        at_new_high = float(close.iloc[-1]) > prior_high
+        vol_ok = latest_vol >= 1.5 * avg_vol_20 if avg_vol_20 > 0 else False
+        day_range = float(_h.iloc[-1] - _l.iloc[-1])
+        close_pos = round((float(close.iloc[-1]) - float(_l.iloc[-1])) / day_range, 2) if day_range > 0 else None
+        bull_candle = float(close.iloc[-1]) > float(_o.iloc[-1])
+        breakout_detail = {
+            "at_60d_high": bool(at_new_high),
+            "volume_vs_20d_avg": vol_ratio_20d,
+            "bullish_candle": bool(bull_candle),
+            "close_position_in_range": close_pos,
+        }
+        if at_new_high and vol_ok:
+            if bull_candle and (close_pos is None or close_pos >= 0.6):
+                breakout_assessment = "放量突破（量、价、收盘位置共振，突破有效性较高）"
+            elif (not bull_candle) or (close_pos is not None and close_pos <= 0.4):
+                breakout_assessment = "高位放量滞涨/出货嫌疑（创60日新高但收盘偏弱）"
+
+    # 4) 位置维度：60日价格区间内的相对位置（低/中/高）
+    price_pos_60d = None
+    price_pos_label = None
+    pos_ref = df_full.tail(60)
+    if len(pos_ref) >= 20:
+        _hi = float(pos_ref["high"].max()) if has_ohlc else float(pos_ref["close"].max())
+        _lo = float(pos_ref["low"].min()) if has_ohlc else float(pos_ref["close"].min())
+        if _hi > _lo:
+            price_pos_60d = round((float(close.iloc[-1]) - _lo) / (_hi - _lo), 2)
+            price_pos_label = "低位" if price_pos_60d < 0.33 else "高位" if price_pos_60d > 0.67 else "中位"
+
+    # Volume-price pattern interpretation（叠加位置维度）
+    base_pattern = "量价关系中性"
+    if avg_up_vol > avg_down_vol * 1.3:
+        base_pattern = "量价配合良好（上涨放量、下跌缩量）"
+    elif avg_down_vol > avg_up_vol * 1.3:
+        base_pattern = "量价背离（下跌放量、上涨缩量，偏空）"
+    elif vol_ratio_5d and vol_ratio_5d > 1.5:
+        base_pattern = "近期明显放量"
+    elif vol_ratio_5d and vol_ratio_5d < 0.6:
+        base_pattern = "近期明显缩量"
+    if price_pos_label:
+        pattern = f"{price_pos_label}·{base_pattern}"
+    else:
+        pattern = base_pattern
+
+    result = {
         "code": stock_code,
         "source": source,
         "period_days": len(df),
@@ -286,15 +357,34 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
         "volume_trend_pct": vol_trend_pct,
         "high_volume_days": high_vol_days,
         "volume_price_corr": vp_corr,
+        "volume_price_corr_note": "成交量与当日涨跌幅的相关系数（正=量能确认走势，负=量价反向）；已修复旧版与价格水平相关被趋势主导的缺陷",
         "pattern": pattern,
     }
+    # 新信号仅在有效时输出，保持载荷精简
+    if vol_pctile is not None:
+        result["volume_percentile"] = vol_pctile
+        result["volume_percentile_label"] = vol_pctile_label
+        result["volume_percentile_window_days"] = vol_pctile_window
+    if obv_divergence:
+        result["obv_divergence"] = obv_divergence
+        result["obv_divergence_note"] = obv_note
+    if breakout_assessment:
+        result["breakout_assessment"] = breakout_assessment
+        result["breakout_detail"] = breakout_detail
+    if price_pos_60d is not None:
+        result["price_position_60d"] = price_pos_60d
+        result["price_position_label"] = price_pos_label
+    return result
 
 
 get_volume_analysis_tool = ToolDefinition(
     name="get_volume_analysis",
     description="Analyse volume-price relationship for a stock. Returns volume ratios, "
                 "average volume on up vs down days, volume trend (expanding/shrinking), "
-                "and pattern interpretation (量价配合/背离). Useful for confirming trend "
+                "volume-price correlation vs daily returns, 250-day volume percentile "
+                "(地量/天量), OBV divergence (顶/底背离), breakout vs distribution "
+                "assessment (放量突破/高位滞涨), and position-aware pattern "
+                "interpretation (低位/高位·量价配合/背离). Useful for confirming trend "
                 "strength and detecting distribution or accumulation phases.",
     parameters=[
         ToolParameter(

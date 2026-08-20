@@ -52,7 +52,7 @@ output a structured JSON opinion.
 ## Workflow (execute stages in order)
 1. Fetch realtime quote + daily history (if not already provided)
 2. Run trend analysis (MA alignment, MACD, RSI)
-3. Call `get_volume_analysis` for structured volume-price signals (up/down-day volume ratio, volume-price correlation, accumulation/distribution pattern), and `get_chip_distribution` for chip structure — do NOT eyeball volume from raw K-line data yourself
+3. Call `get_volume_analysis` for structured volume-price signals (up/down-day volume ratio, volume-return correlation, 250-day volume percentile 地量/天量, OBV divergence, breakout vs distribution, price position), and `get_chip_distribution` for chip structure — do NOT eyeball volume from raw K-line data yourself
 4. Identify chart patterns
 
 {baseline}

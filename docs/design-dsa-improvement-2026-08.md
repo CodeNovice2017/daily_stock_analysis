@@ -344,6 +344,22 @@ score >= 70 → 买入/加仓
 
 **验证**：`tests/test_tushare_fina_cache.py` 8 passed（含硬上限/假时钟超限重试用例）。首次基线 5911 passed / 38 failed，经隔离 worktree 对照确认全部为存量问题；随后修复其中 17 个 fork 自有测试债（pipeline MagicMock 泄漏 15 例、`BACKTEST_MISSED_BULL_PCT` 注册遗漏、requirements 中文注释），当前基线 **5929 passed / 21 failed**，剩余 21 例均为上游代码 + 本地环境触发（.env LLM 渠道泄漏进 system_config 测试 16 例、fake-ip SSRF 5 例），上游 CI 干净环境下不受影响。
 
+### 9.6 P1-A 量价信号升级 + P1-C 复盘闭环激活（2026-08-20）
+
+**P1-A**（`src/agent/tools/analysis_tools.py` 的 `get_volume_analysis`）：
+- 修复 `volume_price_corr`：旧实现 corr(量, 价格水平) 在趋势市被单调漂移主导（量测时间位置而非量价互动）；改为 corr(量, 当日涨跌幅)，涨跌幅方差为 0 时输出 None 而非伪相关
+- 新增信号：250 日量能分位（<20% 地量 / >90% 天量，参考窗口最多取 260 日）；OBV 顶/底背离（价新高/新低而 OBV 差 2% 未同步）；放量突破 vs 高位滞涨出货（60 日新高 + ≥1.5×20日均量 + 阳线 + 收盘位于当日区间上/下 40%）
+- `pattern` 叠加位置维度（60 日区间低/中/高位前缀）
+- 新键均为条件输出（无信号不占载荷），旧键全部保留
+- 测试 `tests/test_volume_analysis_tool.py` 15 用例；executor 四处提示词 + TechnicalAgent workflow 同步
+- 真实数据冒烟（000783）：分位 67.2% 中性、位置 0.37 中位、无背离/突破——与横盘态一致
+
+**P1-C 复盘闭环激活**（`scripts/run_outcome_backfill.py` + cc-connect cron `dbff5e6c`，每交易日 19:11）：
+- 决策信号首次回填 55 条：**已判定 9 条 = 3 对 / 5 错 / 1 平**；39 条 watch 无方向可判（保守倾向的直接证据）；295 条等未来数据
+- Skill 观点首次评估 500 键：**已判定 61 条 = 21 对 / 40 错（命中率 34%）**——box_oscillation 7/19、bull_trend 5/13、shrink_pullback 6/19、ma_golden_cross 1/6、growth_quality 2/3、volume_breakout 0/1
+- 解读：方向判断命中率显著低于 50%，与"文献实证"结论一致（多数 LLM agent 跑不赢规则）；这正是三层架构（规则择时 + LLM 定性确认）路线的实证依据，后续权重修订应以此为基线对照
+- 待办：Alerts 规则迁移到当前持仓（需用户确认价位）、Screening 定期化
+
 ### 9.4 下一步（P1，待 P0 观察一两周后）
 
 - P1-1 回测聚合摘要注入（FinMem 式："本股历史 N 次判断 X 对，看多 M 次全对"）——注意只注入聚合统计不注入逐条叙事

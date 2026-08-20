@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] Tushare 财报/估值类接口（业绩预告、财务指标、融资融券、每日估值）增加实例级 TTL 缓存：季度级数据 24h、日更数据 4h，失败/空结果不缓存，512 条硬上限（先清过期、仍超限按最近过期淘汰）防长驻进程无界增长。
 - [改进] Tushare 限频计数器由实例级改为类级共享，修复 manager/intraday/ml_agent 各建实例导致配额预算 ×3 的漏洞（锁内计数、锁外等待）；新增 `TUSHARE_RATE_LIMIT_PER_MINUTE` 环境变量并透传至全部实例化点（默认 80，5000 积分账号可放宽）。
 - [修复] Web 设置注册表补登记 `BACKTEST_MISSED_BULL_PCT`（观望计分阈值，此前仅在 .env.example 生效未进设置页）；测试侧修复 15 个 pipeline 用例因 MagicMock 数据源管理器泄漏进 Tushare 补充数据格式化路径而失败的问题（显式置空 `_fetchers_by_name` 使其按"未配置"跳过），并新增该补充数据块的正向覆盖用例。
+- [改进] `get_volume_analysis` 量价工具升级：修复量价相关系数被价格趋势主导的缺陷（改为成交量 vs 当日涨跌幅相关）；新增 250 日量能分位（地量/天量）、OBV 顶/底背离（2% 阈值）、放量突破 vs 高位滞涨出货判别（60 日新高 + 1.5× 均量 + 阳线 + 收盘区间位置）、量价形态叠加低/中/高位位置维度；executor/TechnicalAgent 提示词同步更新。
+- [新功能] 新增 `scripts/run_outcome_backfill.py` 复盘回填入口：增量评估决策信号与 Skill 观点的方向对错（hit/miss/neutral）并输出分策略命中率统计，支持 `--stats` 只读模式，供定时任务或手动执行。
 
 ## [3.30.0] - 2026-08-09
 
