@@ -13,7 +13,11 @@ required_tools:
 aliases: [缩量回踩, 回踩]
 default_router: true
 default_priority: 40
-market_regimes: [trending_down, sideways]
+# [personal patch] 反弹能力建设(2026-08-24)：从 trending_down 池移出——缩量回踩
+# 是趋势(多头)延续技能,下跌趋势中的"缩量"是阴跌而非回踩,混在下跌池里
+# 持续对深跌股输出 hold 拖低判分命中率(实证:8/20-21 样本)。下跌池交给
+# bottom_volume(右侧确认)与 oversold_rebound(左侧分级)双视角对抗。
+market_regimes: [sideways]
 
 instructions: |
   **缩量回踩（Shrink Volume Pullback Strategy）**

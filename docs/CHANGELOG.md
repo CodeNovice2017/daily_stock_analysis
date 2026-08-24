@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] `get_volume_analysis` 量价工具升级：修复量价相关系数被价格趋势主导的缺陷（改为成交量 vs 当日涨跌幅相关）；新增 250 日量能分位（地量/天量）、OBV 顶/底背离（2% 阈值）、放量突破 vs 高位滞涨出货判别（60 日新高 + 1.5× 均量 + 阳线 + 收盘区间位置）、量价形态叠加低/中/高位位置维度；executor/TechnicalAgent 提示词同步更新。
 - [新功能] 新增 `scripts/run_outcome_backfill.py` 复盘回填入口：增量评估决策信号与 Skill 观点的方向对错（hit/miss/neutral）并输出分策略命中率统计，支持 `--stats` 只读模式，供定时任务或手动执行。
 - [改进] 中长线选股引擎 P2 因子修订（实证依据见 `docs/design-medium-long-term-module.md` §9）：成长维新增 SUE 盈余惊喜主因子（时序口径 10 分）；趋势维新增残差动量（对沪深300回归残差的年化 Sharpe，9 分，修正 A 股价格动量为负的实证缺陷）；质量维新增现金流实现率子因子（经营现金流/净利润 5 分）；估值 20→12 降权（弱因子）。新数据源仅在过筛后评分阶段拉取，指数日线全流程缓存一次。
+- [新功能] 新增 `oversold_rebound`（超卖反弹）技能：下跌趋势中的左侧分级介入框架（一级观察：超卖/地量/底背离 → 二级试探：缩量止跌+首次放量阳线 1-2 成 → 三级主升：放量收复 MA10/20 搏反弹段），持有期 2-5 日、目标位止盈、止损独立于信号；与 `bottom_volume`（右侧确认）在 trending_down 池构成对抗双视角；同时将 `shrink_pullback`（多头延续技能）移出 trending_down 池，修复其在深跌股上持续输出 hold 的路由错位。
 
 ## [3.30.0] - 2026-08-09
 

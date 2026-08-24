@@ -1,0 +1,64 @@
+# Oversold Rebound Strategy / 超卖反弹
+# Left-side staged entry in downtrends. Counter-view to bottom_volume (right-side confirmation).
+
+name: oversold_rebound
+display_name: 超卖反弹
+description: 下跌趋势中的分级反弹交易：超卖+地量识别→缩量止跌+首次放量试探→放量收复均线搏反弹段，目标位止盈。左侧分级介入。
+category: reversal
+core_rules: [2, 5]
+required_tools:
+  - get_daily_history
+  - analyze_trend
+  - get_volume_analysis
+aliases: [超卖反弹, 下跌反弹, 地量反弹]
+default_priority: 55
+market_regimes: [trending_down]
+
+instructions: |
+  **超卖反弹（Oversold Rebound）——左侧分级介入框架**
+
+  适用前提：股价处于下跌趋势（`analyze_trend` → BEAR / STRONG_BEAR）。
+  本技能与 bottom_volume（右侧放量确认）视角对立：它等单日大阳线确认，
+  你找分级买点；两者分歧应保留在各自观点中，由上层综合裁决。
+
+  ⚠️ 总纪律（先于一切信号）：
+  - 反弹是借来的行情，**持有期定位 2-5 个交易日**，到目标位或时间窗即减，不恋战。
+  - **合计仓位上限 3 成**。
+  - **止损独立设置**：近期阶段低点下方（或 2×ATR），绝不依赖 RSI 回升自愈——
+    超卖可以钝化很久（A股阴跌尤甚）。
+  - 严禁在一级观察阶段买入。
+
+  三级判定标准：
+
+  1. **一级·观察池**（满足任意两条）：
+     - `analyze_trend` → RSI6 < 20 或 RSI14 < 30
+     - 乖离 MA20 ≤ -10%
+     - `get_volume_analysis` → volume_percentile_label = "地量"（250日分位<20%）
+       或 obv_divergence = "bullish"（底背离，下跌量能衰竭）
+     → 仅输出 watch 观点并说明触发条件，不买入。
+
+  2. **二级·试探仓**（一级成立后，以下全部满足）：
+     - 缩量止跌：近 3-5 日不再创阶段新低，量能分位处于低位
+     - 首次放量阳线：当日量比（vs 5日均量）1.5-2.5 倍 + 收阳
+     - 价格未跌破一级时记录的阶段低点
+     → 1-2 成试探，止损=阶段低点下方；信号 buy，confidence 中低，
+     buy_reason 注明「超卖反弹·试探仓」。
+
+  3. **三级·反弹主升**（二级后确认）：
+     - 放量收复 MA10，且 2-3 日站稳 MA10 或开始收复 MA20
+     → 持有搏反弹段；**目标位 = 前密集平台 / MA60 / 上方缺口下沿**，
+       任一到位减半，全部到位清仓；**5 个交易日未到目标也减**。
+       pattern_analysis 注明「超卖反弹·主升段」。
+
+  **反弹 vs 反转判别**（防止把反弹拿成股东）：
+  - 无基本面配合的技术性修复一律按反弹做，严格目标位止盈。
+  - 反转升级需双确认：`search_stock_news` 有实质催化（业绩/政策/订单）
+    **且**资金回流（主力净流入转正）——此时才允许放宽持有，
+    并注明「反转升级条件成立」。
+
+  评分调整：
+  - 一级成立：+0（仅观察）
+  - 二级成立（试探）：sentiment_score +5
+  - 三级确认（主升）：sentiment_score +8
+  - 反弹目标位已到达：提示减仓，不再加分
+  - stop_loss 必须明确标注阶段低点价位。
