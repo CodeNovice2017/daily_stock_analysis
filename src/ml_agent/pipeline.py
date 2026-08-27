@@ -77,6 +77,24 @@ def analyze_stock(
         "holder_trade": holder_trade,
     }
 
+    # [personal patch] None 净化：Tushare 安全取值层会把缺失字段存成 None
+    # （如 600900 的 2010 年旧预告 p_change_max=None），下游 prompt 格式化
+    # `.get(k, 0)` 对已存在但为 None 的键不生效，`:.1f`/`/1e8` 直接抛
+    # TypeError 炸断整条 Agent 链。这里在装配口统一把 dict 树里的 None
+    # 数值位归零，字符串位保留，一处修复覆盖全部消费者。
+    def _sanitize(obj):
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(x) for x in obj]
+        if obj is None:
+            return 0
+        return obj
+
+    for key in ("fina", "forecast", "financials", "share_float", "holder_trade", "daily_basic_now"):
+        if isinstance(data.get(key), (dict, list)):
+            data[key] = _sanitize(data[key])
+
     if verbose:
         logger.info(f"[ML-Analyze] {code} {name} 数据准备完成，启动 Agent 链")
 

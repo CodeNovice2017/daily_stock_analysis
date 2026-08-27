@@ -209,12 +209,22 @@ def run_fundamental_agent(data: Dict[str, Any]) -> str:
             for inc in inc_list[:4]:
                 user_parts.append(f"- {inc['period']}: 营收={inc.get('revenue',0)/1e8:.1f}亿 净利={inc.get('n_income',0)/1e8:.1f}亿")
 
-    # 业绩预告
+    # 业绩预告（过滤远古记录：Tushare forecast 无日期下限时会返回多年前的
+    # 旧预告——如 600900 返回 2010 年记录，对当前分析是噪音；
+    # 字段可能为 None，.get 默认值不生效，统一做 None 安全格式化）
     if forecast:
-        user_parts.append(f"\n## 业绩预告")
-        user_parts.append(f"- 类型: {forecast.get('type','')}")
-        user_parts.append(f"- 增幅: {forecast.get('p_change_min',0):.1f}% ~ {forecast.get('p_change_max',0):.1f}%")
-        user_parts.append(f"- 净利区间: {forecast.get('net_profit_min',0)/1e8:.1f} ~ {forecast.get('net_profit_max',0)/1e8:.1f} 亿元")
+        period = str(forecast.get("report_period") or "")
+        is_recent = period >= "2025" if period else False
+        if is_recent:
+            def _f(v, scale=1.0):
+                try:
+                    return f"{float(v) / scale:.1f}"
+                except (TypeError, ValueError):
+                    return "N/A"
+            user_parts.append("\n## 业绩预告")
+            user_parts.append(f"- 类型: {forecast.get('type','')}")
+            user_parts.append(f"- 增幅: {_f(forecast.get('p_change_min'))}% ~ {_f(forecast.get('p_change_max'))}%")
+            user_parts.append(f"- 净利区间: {_f(forecast.get('net_profit_min'), 1e8)} ~ {_f(forecast.get('net_profit_max'), 1e8)} 亿元")
 
     user_prompt = "\n".join(user_parts)
     return chat(FUNDAMENTAL_PROMPT, user_prompt, temperature=0.3, max_tokens=6000)
