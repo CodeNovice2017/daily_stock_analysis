@@ -12,7 +12,11 @@ required_tools:
   - get_volume_analysis
 aliases: [超卖反弹, 下跌反弹, 地量反弹]
 default_priority: 55
-market_regimes: [trending_down]
+# [personal patch] 2026-08-26:加挂 sideways 池——连续两日实证(A股下跌后期
+# 大多呈箱体磨底而非单边下跌,8/25-26 的 159516/515050 等教科书级
+# "极度缩量+箱底十字星" setups 全被路由到 sideways 池而错过本技能),
+# 箱底磨底正是本技能的主场。
+market_regimes: [trending_down, sideways]
 
 instructions: |
   **超卖反弹（Oversold Rebound）——左侧分级介入框架**
