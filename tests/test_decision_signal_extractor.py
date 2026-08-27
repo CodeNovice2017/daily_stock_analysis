@@ -468,22 +468,29 @@ def test_build_payload_skips_ambiguous_action_non_stock_and_unknown_market() -> 
 
 
 def test_resolver_explicit_decision_chain_recovers_risk_downgraded_reports() -> None:
-    """[personal patch] P1-C 回归：风控降级报告不得因复合文案歧义丢失信号。
+    """[personal patch] P1-C 回归（2026-08-27 随上游 v3.31.0 合并修订契约）。
 
-    2026-08-18~20 期间 "减仓/卖出（原建议已被风控下调）" 同时命中
-    reduce/sell 被判歧义，风控降级报告全部未进入复盘库。
+    风控降级报告的恢复路径：risk_control.applied 时 post_risk_signal 是
+    风控改写后的权威动作，复合降级文案（"减仓/卖出…"同时命中 reduce/sell
+    判歧义）由它兜底——2026-08-18~20 期间无此兜底导致降级样本全部丢失。
+
+    上游 v3.31.0 加固的 fail-closed 契约：歧义文案一律返回 None，不得从
+    dashboard.action（对 refresh 路径是风控前旧动作）或 decision_type
+    （多情景作战计划本就多义）虚构动作。结构化字段兜底仅在文案为空时生效。
+    已知取舍：agent 原生多情景作战计划（无 risk_control）不再提取信号，
+    待 orchestrator 为原生决策写入 dashboard.action 后恢复。
     """
-    # 1) dashboard.action（新运行的 orchestrator 在风控降级时写入）
+    # 1) 风控降级新形态：dashboard.action + risk_control 双写
     r1 = _result(
         operation_advice="减仓/卖出（原建议已被风控下调）",
         action=None,
         decision_type=None,
         sentiment_score=36,
     )
-    r1.dashboard = {"action": "sell"}
+    r1.dashboard = {"action": "sell", "risk_control": {"applied": True, "post_risk_signal": "sell"}}
     assert resolve_decision_signal_action_fields(r1, report_type="simple")["action"] == "sell"
 
-    # 2) 旧记录回退 risk_control.post_risk_signal（action 键写入前的存量）
+    # 2) 旧记录（action 键写入前的存量）仅 risk_control 也可恢复
     r2 = _result(
         operation_advice="减仓/卖出（原建议已被风控下调）",
         action=None,
@@ -493,21 +500,25 @@ def test_resolver_explicit_decision_chain_recovers_risk_downgraded_reports() -> 
     r2.dashboard = {"risk_control": {"applied": True, "post_risk_signal": "sell"}}
     assert resolve_decision_signal_action_fields(r2, report_type="simple")["action"] == "sell"
 
-    # 3) agent 原生决策：多情景作战计划（买入+减仓并存，文案天然歧义）时
-    #    以 decision_type 兜底
+    # 3) fail-closed：歧义文案 + 旧结构化字段 → None（上游契约）
     r3 = _result(
         operation_advice="【空仓者】回踩企稳可轻仓试探买入；【持仓者】反抽减仓，击穿支撑执行离场",
         action=None,
         decision_type="sell",
         sentiment_score=36,
     )
-    r3.dashboard = {}
-    assert resolve_decision_signal_action_fields(r3, report_type="simple")["action"] == "sell"
+    r3.dashboard = {"action": "buy"}
+    assert resolve_decision_signal_action_fields(r3, report_type="simple")["action"] is None
 
     # 4) risk_control 未应用时不得读取 post_risk_signal
     r4 = _result(operation_advice="买盘增强，继续观察", action=None, decision_type=None)
     r4.dashboard = {"risk_control": {"applied": False, "post_risk_signal": "sell"}}
     assert resolve_decision_signal_action_fields(r4, report_type="simple")["action"] is None
+
+    # 5) 文案为空的异常报告才允许结构化字段兜底
+    r5 = _result(operation_advice="", action=None, decision_type="hold", sentiment_score=50)
+    r5.dashboard = {}
+    assert resolve_decision_signal_action_fields(r5, report_type="simple")["action"] == "hold"
 
     unknown_market = _result(code="UNKNOWN", operation_advice="买入", action="buy")
     assert build_decision_signal_payload_from_report(

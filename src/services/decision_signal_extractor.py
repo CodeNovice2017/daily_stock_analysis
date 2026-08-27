@@ -187,19 +187,21 @@ def resolve_decision_signal_action_fields(
         score=score,
         raw_action=raw_action,
     )
-    # [personal patch] P1-C 修复:显式动作的取值与 pipeline 的
-    # populate_decision_action_fields 对齐——result.action 为空时回退
-    # dashboard.action（风控降级路径在此写入权威动作），再退到建议文案
-    # 解析。避免"减仓/卖出（原建议已被风控下调）"这类复合文案因同时命中
-    # reduce/sell 被判歧义而丢失信号。旧记录（action 键写入前）再回退
-    # risk_control.post_risk_signal，保证历史降级样本可回填复盘。
+    # [personal patch] P1-C 修复(2026-08-27 随上游 v3.31.0 合并修订):
+    # 显式动作链 = result.action → risk_control.post_risk_signal(仅 applied)。
+    # post_risk_signal 是风控改写**之后**的权威值,不属于"待废弃的旧动作",
+    # 风控降级复合文案("减仓/卖出(原建议已被风控下调)")同时命中 reduce/sell
+    # 判歧义,必须由它兜底,否则降级样本再次全部丢失。
+    # 其余兜底(dashboard.action / decision_type)收紧为**仅文案为空**时生效:
+    # 上游新加固的 fail-closed 契约(见 test_final_action_refresh_* )要求
+    # 歧义文案一律 None,不得从旧字段虚构动作——dashboard.action 对 refresh
+    # 路径恰是"风控前旧动作",decision_type 在多情景作战计划里本就多义。
     explicit_action = getattr(result, "action", None)
-    if not str(explicit_action or "").strip():
-        explicit_action = dashboard.get("action")
     if not str(explicit_action or "").strip():
         risk_control = _as_mapping(dashboard.get("risk_control"))
         if risk_control.get("applied"):
             explicit_action = risk_control.get("post_risk_signal")
+    advice_text = str(getattr(result, "operation_advice", None) or "").strip()
     def _resolve(explicit: Any) -> Dict[str, Any]:
         return build_action_fields(
             operation_advice=getattr(result, "operation_advice", None),
@@ -212,13 +214,14 @@ def resolve_decision_signal_action_fields(
         )
 
     fields = _resolve(explicit_action)
-    if fields["action"] is None:
-        # 文案解析失败（歧义/无动作词，如多情景自由文本作战计划）时，最后
-        # 回退 agent 的规范决策枚举（decision_type）。注意：仅作兜底而非
-        # 覆盖源——文案中的"持有/观望"保守偏好规则必须保持优先。
-        decision_type = getattr(result, "decision_type", None)
-        if str(decision_type or "").strip():
-            fields = _resolve(decision_type)
+    if fields["action"] is None and not advice_text:
+        # 文案为空(极少数异常报告)时才从结构化字段兜底;歧义文案一律
+        # fail-closed 返回 None(上游契约)。
+        fallback = dashboard.get("action")
+        if not str(fallback or "").strip():
+            fallback = getattr(result, "decision_type", None)
+        if str(fallback or "").strip():
+            fields = _resolve(fallback)
     return fields
 
 
