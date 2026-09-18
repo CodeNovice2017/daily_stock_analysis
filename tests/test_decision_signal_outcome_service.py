@@ -494,7 +494,7 @@ def test_not_up_uses_defensive_direction_not_down_direction(isolated_db) -> None
     assert miss["outcome"] == "miss"
 
 
-def test_unable_reasons_are_persisted_for_non_directional_and_unsupported_horizon(isolated_db) -> None:
+def test_non_directional_persisted_and_intraday_signals_use_daily_windows(isolated_db) -> None:
     watch_id = _add_signal(isolated_db, action="watch", horizon="3d")
     intraday_buy_id = _add_signal(isolated_db, code="000001", action="buy", horizon="intraday")
     _seed_bars(isolated_db, code="600519", closes=[103, 104, 105])
@@ -502,18 +502,21 @@ def test_unable_reasons_are_persisted_for_non_directional_and_unsupported_horizo
     service = DecisionSignalOutcomeService(db_manager=isolated_db)
 
     watch = service.run_outcomes(signal_id=watch_id)["items"][0]
-    intraday = service.run_outcomes(signal_id=intraday_buy_id)["items"][0]
+    intraday_items = service.run_outcomes(signal_id=intraday_buy_id)["items"]
     watch_skipped = service.run_outcomes(signal_id=watch_id)
     intraday_skipped = service.run_outcomes(signal_id=intraday_buy_id)
 
     assert watch["eval_status"] == "unable"
     assert watch["unable_reason"] == "non_directional_action"
-    assert intraday["eval_status"] == "unable"
-    assert intraday["unable_reason"] == "unsupported_horizon"
+    # intraday 方向性信号按 1d/3d 双窗口判分(锚定日收盘 100,forward 103/104/105)
+    assert [(item["horizon"], item["eval_status"], item["direction_expected"], item["outcome"]) for item in intraday_items] == [
+        ("1d", "completed", "up", "hit"),
+        ("3d", "completed", "up", "hit"),
+    ]
     assert watch_skipped["evaluated"] == 0
     assert watch_skipped["skipped"] == 1
     assert intraday_skipped["evaluated"] == 0
-    assert intraday_skipped["skipped"] == 1
+    assert intraday_skipped["skipped"] == 2
 
 
 def test_watch_and_alert_outcomes_remain_unable_without_market_reads(isolated_db) -> None:

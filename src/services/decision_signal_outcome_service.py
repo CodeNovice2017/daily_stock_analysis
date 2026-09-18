@@ -610,6 +610,11 @@ class DecisionSignalOutcomeService:
         if requested:
             return requested
         horizon = str(signal.horizon or "").strip()
+        if horizon == "intraday":
+            # 盘中创建的方向性信号按 1d/3d 收盘窗口判分,锚定日与收盘后信号同口径
+            # (均为信号当日)。警报类 action='alert' 无方向,在方向判定阶段按
+            # non_directional_action 处理,不会进入此分支后的行情评估。
+            return ["1d", "3d"]
         if horizon:
             return [horizon]
         return list(SUPPORTED_OUTCOME_HORIZONS.keys())
