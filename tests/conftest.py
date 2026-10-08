@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import time
 import threading
+
+# [personal patch] 子进程形式的 akshare 护栏会绕过 monkeypatch 注入的进程内
+# mock(sys.modules 替换 / requests.get HTTP 边界),导致契约测试拿不到调用记录。
+# 测试进程统一退回同进程调用,生产路径不受影响。
+os.environ.setdefault("DSA_DISABLE_AKSHARE_SUBPROCESS_GUARD", "1")
 from collections.abc import Awaitable, Callable
 from contextvars import copy_context
 from functools import wraps

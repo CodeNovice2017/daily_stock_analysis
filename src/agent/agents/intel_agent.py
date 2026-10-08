@@ -15,6 +15,7 @@ import logging
 from typing import Optional
 
 from src.agent.agents.base_agent import BaseAgent
+from src.agent.tools.fxmacrodata_tools import fxmacrodata_tool_names
 from src.agent.protocols import AgentContext, AgentOpinion
 from src.agent.runner import try_parse_json
 
@@ -31,7 +32,7 @@ class IntelAgent(BaseAgent):
         "get_capital_flow",
         "get_forecast",
         "get_fina_indicator",
-    ]
+    ] + fxmacrodata_tool_names()
 
     def system_prompt(self, ctx: AgentContext) -> str:
         return """\
