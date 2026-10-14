@@ -1479,6 +1479,7 @@ class AgentOrchestrator:
             )
             operation_advice = _adjust_operation_advice(
                 pre_risk_advice,
+                application.from_signal.value,
                 decision_type,
             )
         else:
@@ -2104,18 +2105,27 @@ def _soft_adjust_sentiment_score(score: int, from_signal: str, to_signal: str) -
     return max(floor, min(to_high, adjusted))
 
 
-def _adjust_operation_advice(advice: str, signal: str) -> str:
-    """Normalize action wording to the overridden decision signal."""
-    mapping = {
-        "buy": "买入",
-        "hold": "观望",
-        "sell": "减仓/卖出",
-    }
-    if signal not in mapping:
+def _adjust_operation_advice(advice: str, from_signal: str, to_signal: str) -> str:
+    """按降档类型分化文案,替代旧的"减仓/卖出（原建议已被风控下调）"复合词。
+
+    旧复合词在 normalize_decision_action 中同时命中 reduce/sell → fail-closed
+    None(复盘样本丢失)。新措辞经双解析器实测验证(2026-10-15):
+    - →hold: "持有观察（…）" normalize=hold / 判分方向=not_down
+    - →sell: "防守性卖出（…）" normalize=sell / 判分方向=down
+    降级说明固定放在动词之后——若"买入"出现在观望/卖出词之前,判分引擎
+    会把风控降级样本误读为看多(实测复现过的陷阱)。
+    """
+    if to_signal == "hold":
+        canonical = "持有观察"
+    elif to_signal == "sell":
+        canonical = "防守性卖出"
+    elif to_signal == "buy":
+        canonical = "买入"
+    else:
         return advice
-    if advice == mapping[signal]:
+    if advice == canonical:
         return advice
-    return f"{mapping[signal]}（原建议已被风控下调）"
+    return f"{canonical}（原建议已被风控下调）"
 
 
 def _risk_downgrade_narrative(

@@ -276,7 +276,9 @@ def test_orchestrator_returns_internal_facts_without_public_dashboard_fields():
     finalize_spy.assert_called_once()
     risk_spy.assert_called_once_with(ctx)
     assert call_order == ["prepare", "risk", "finalize"]
-    assert "观望" in result.dashboard["operation_advice"]
+    # [personal patch 2026-10-15] 风控降档 hold 文案从"观望"改为"持有观察"
+    # (单一动作词,normalize 不再 fail-closed;见 _adjust_operation_advice)
+    assert "持有观察" in result.dashboard["operation_advice"]
     core = result.dashboard["dashboard"]["core_conclusion"]
     assert core["one_sentence"].startswith("[风控下调: buy -> hold]")
     assert "趋势向上，建议立即买入" in core["one_sentence"]

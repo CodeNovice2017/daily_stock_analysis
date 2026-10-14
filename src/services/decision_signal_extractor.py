@@ -132,6 +132,22 @@ def build_decision_signal_payload_from_report(
             metadata["action_adjustment_reason"] = "canonical_score_alignment"
     if guardrail_reason:
         metadata["guardrail_reason"] = guardrail_reason
+    # [personal patch 2026-10-15] 拷贝风控降档上下文进 metadata:
+    # dashboard.risk_control 已含 pre/post_risk_signal、downgrade_reason、
+    # narrative(orchestrator 生成后此前被提取器丢弃)。下游可据此区分
+    # "防守性减仓"与"逻辑破坏清仓"。仅在 applied 时写入,避免空字典噪音。
+    risk_control_meta = _as_mapping(dashboard.get("risk_control"))
+    if risk_control_meta.get("applied"):
+        metadata["risk_control"] = {
+            key: risk_control_meta.get(key)
+            for key in (
+                "pre_risk_signal",
+                "post_risk_signal",
+                "downgrade_reason",
+                "narrative",
+            )
+            if risk_control_meta.get(key) is not None
+        }
     market_phase_summary = _extract_market_phase_summary(context_snapshot, result)
     if market_phase_summary:
         metadata["market_phase_summary"] = market_phase_summary
