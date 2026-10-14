@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from src.analysis_context_pack_prompt import CORE_DEGRADED_STATUSES
+from src.core.trading_calendar import get_next_trading_date
 from src.market_phase_summary import render_market_phase_summary
 from src.report_language import localize_confidence_level, normalize_report_language
 
@@ -16,6 +19,13 @@ if TYPE_CHECKING:
 
 INTRADAY_PHASES = {"intraday", "lunch_break", "closing_auction"}
 CONSERVATIVE_ACTION_PHASES = {"premarket", "non_trading", "unknown"}
+
+# [personal patch 2026-10-15] 匹配"下一交易日/次日"紧邻的显式日期(全角/半角/无括号),
+# 只改这一个日期,保护同文本中的财报等事件日期。
+_NEXT_TRADING_DAY_DATE_RE = re.compile(
+    r"(下一交易日|次日|next trading day)(\s*[（(]?\s*)(\d{4}-\d{2}-\d{2})(\s*[）)]?)"
+)
+_TRADING_DAY_FIX_FIELDS = ("action_window", "next_check_time")
 CORE_DATA_BLOCKS = {"quote", "daily_bars", "technical"}
 
 _PHASE_CONTEXT_KEYS = (
@@ -145,6 +155,20 @@ def apply_phase_decision_guardrails(
     if phase_summary:
         phase_decision["phase_context"] = _phase_context_from_summary(phase_summary)
 
+    # [personal patch 2026-10-15] "下一交易日"日期校验:LLM 自由文本做 +1 天算术,
+    # 节后/周末常出错(实例:10/9 周五报告写"下一交易日 2026-10-10"周六)。
+    # 按 phase 选锚(盘后→next(session_date);盘前→session_date 即当天),
+    # 仅改写"下一交易日/次日"紧邻的日期,保护同文本中的财报等事件日期。
+    if _fix_next_trading_date_references(phase_decision, phase_summary):
+        reason = _reason_text(
+            language,
+            en="next-trading-day date corrected against the exchange calendar",
+            zh="下一交易日日期已按交易日历校准",
+            ko="다음 거래일 날짜를 거래 달력에 맞게 수정함",
+        )
+        _append_reason(phase_decision, reason)
+        adjustments.append("next_trading_date_corrected")
+
     merged_limitations = _merge_limitations(
         _list_strings(phase_decision.get("data_limitations")),
         _phase_warning_limitations(phase_summary, language=language),
@@ -203,6 +227,54 @@ def apply_phase_decision_guardrails(
         )
 
     return adjustments
+
+
+def _fix_next_trading_date_references(
+    phase_decision: Dict[str, Any],
+    phase_summary: Optional[Dict[str, Any]],
+) -> bool:
+    """校准 action_window/next_check_time 中"下一交易日"的日期。
+
+    - 锚定按 phase 区分:盘前(premarket)运行时 session_date 已是当日,
+      "下一交易日"指当天本身;其余阶段取 next(session_date)。
+    - 交易日历不可用(get_next_trading_date 返回 None)时跳过,fail-open
+      保留 LLM 原文。
+    - 返回是否有改写。
+    """
+
+    if not phase_summary:
+        return False
+
+    market = str(phase_summary.get("market") or "cn").strip() or "cn"
+    phase = str(phase_summary.get("phase") or "").strip()
+    session_date_text = str(phase_summary.get("session_date") or "").strip()
+    try:
+        session_date = datetime.strptime(session_date_text, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+
+    if phase == "premarket":
+        expected: Optional[date] = session_date
+    else:
+        expected = get_next_trading_date(market, session_date)
+    if expected is None:
+        return False
+    expected_text = expected.isoformat()
+
+    adjusted = False
+    for field in _TRADING_DAY_FIX_FIELDS:
+        value = phase_decision.get(field)
+        if not isinstance(value, str) or not value:
+            continue
+
+        def _replace(match: "re.Match[str]") -> str:
+            return match.group(1) + match.group(2) + expected_text + match.group(4)
+
+        new_value, count = _NEXT_TRADING_DAY_DATE_RE.subn(_replace, value)
+        if count and new_value != value:
+            phase_decision[field] = new_value
+            adjusted = True
+    return adjusted
 
 
 def _ensure_phase_decision_shape(phase_decision: Dict[str, Any]) -> None:
@@ -380,6 +452,13 @@ def _append_reason(phase_decision: Dict[str, Any], reason: str) -> None:
 
 
 def _adjustment_limitation_text(adjustment: str, *, language: str) -> str:
+    if adjustment == "next_trading_date_corrected":
+        return _reason_text(
+            language,
+            en="next-trading-day date corrected",
+            zh="下一交易日日期已按交易日历校准",
+            ko="다음 거래일 날짜를 거래 달력에 맞게 수정함",
+        )
     if adjustment == "postmarket_recap_wording_adjusted":
         return _reason_text(
             language,

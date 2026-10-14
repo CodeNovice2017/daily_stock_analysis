@@ -323,3 +323,52 @@ def test_guardrail_creates_dashboard_for_agent_compatible_result_object() -> Non
     assert adjustments == []
     assert result.dashboard["phase_decision"]["phase_context"]["phase"] == "intraday"
     assert result.dashboard["phase_decision"]["watch_conditions"] == []
+
+
+# [personal patch 2026-10-15] 下一交易日日期校准回归测试
+def test_next_trading_day_date_corrected_postmarket() -> None:
+    result = _result()
+    result.dashboard["phase_decision"]["action_window"] = (
+        "下一交易日（2026-10-10）09:30-10:30 开盘确认窗口;财报事件窗口 2026-10-23 临近"
+    )
+    result.dashboard["phase_decision"]["next_check_time"] = (
+        "下一交易日 2026-10-10 09:25 集合竞价观察"
+    )
+    phase = {"phase": "postmarket", "market": "cn", "session_date": "2026-10-09"}
+
+    adjustments = apply_phase_decision_guardrails(
+        result, market_phase_summary=phase, analysis_context_pack_overview=None
+    )
+
+    pd = result.dashboard["phase_decision"]
+    assert "next_trading_date_corrected" in adjustments
+    assert "2026-10-12" in pd["action_window"]
+    assert "2026-10-10" not in pd["action_window"]
+    assert "2026-10-23" in pd["action_window"]  # 事件日期不被误改
+    assert "2026-10-12" in pd["next_check_time"]
+
+
+def test_next_trading_day_premarket_anchor_is_today() -> None:
+    result = _result()
+    result.dashboard["phase_decision"]["action_window"] = "下一交易日(2026-10-15) 09:30 开盘"
+    phase = {"phase": "premarket", "market": "cn", "session_date": "2026-10-15"}
+
+    adjustments = apply_phase_decision_guardrails(
+        result, market_phase_summary=phase, analysis_context_pack_overview=None
+    )
+
+    assert "next_trading_date_corrected" not in adjustments
+    assert "2026-10-15" in result.dashboard["phase_decision"]["action_window"]
+
+
+def test_next_trading_day_calendar_unavailable_skips() -> None:
+    result = _result()
+    result.dashboard["phase_decision"]["action_window"] = "下一交易日(2026-10-10) 09:30 开盘"
+    phase = {"phase": "postmarket", "market": "xx-invalid", "session_date": "2026-10-09"}
+
+    adjustments = apply_phase_decision_guardrails(
+        result, market_phase_summary=phase, analysis_context_pack_overview=None
+    )
+
+    assert "next_trading_date_corrected" not in adjustments
+    assert "2026-10-10" in result.dashboard["phase_decision"]["action_window"]
