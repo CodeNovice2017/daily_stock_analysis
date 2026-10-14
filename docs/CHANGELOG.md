@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] watch 信号按裁决文本分类判分方向：`_direction_for_action` 此前对 watch 无方向映射导致全历史 55 条 watch 判分短路进不可重试的 `non_directional_action` 终态；现按 reason（一句话裁决）优先、watch_conditions（双向触发梯）次之的保守关键词分类，仅多头词判不看跌、仅空头词判不看涨、混合保持不可判，词表不收"买入"等歧义词。存量 49 条终态废行已删（排除 6 条测试污染信号，备份于 `.claude/reviews/`）并同版本重评，22/45 条真实 watch 信号获得方向。
+- [修复] 报告点位跨字段校验与哨兵防回填：数组样式点位（LLM 想给区间）不再静默取末元素，止损≥目标倒挂判无效；dashboard 层在 support 兜底前把无效值清洗为哨兵"—"（不触发自动回填、落库自动 NULL），显式空值（N/A）保持原样；止损==买点视为突破型贴线止损保留并告警。
+- [修复] "下一交易日"日期按交易日历校准：护栏后处理对 action_window/next_check_time 中紧邻"下一交易日/次日"的显式日期用 exchange-calendars 校正（盘后锚 next(session_date)、盘前锚当日），仅改标注日期不动财报等事件日期，日历不可用则跳过；改写记录进 data_limitations。
+- [修复] 风控降档文案分化并持久化降档上下文：hold→sell 不再输出"减仓/卖出（原建议已被风控下调）"复合词（normalize fail-closed 导致降级样本解析丢失），改为按降档类型输出"持有观察/防守性卖出（…）"（经 normalize 与判分方向双验证，降级说明固定后置防止被判分误读为看多）；decision signal metadata 新增 risk_control 降档四字段（仅 applied 时），可区分防守性减仓与逻辑破坏清仓。
 - [修复] 判分回填脚本评估前自动补 K 线：`scripts/run_outcome_backfill.py` 新增 `_backfill_daily_bars`，对近 30 天有决策信号/Skill 观点样本的股票统一经 Tushare 拉取近期日线并 UPSERT 落库，消除未被当日分析命中的信号股因本地 bar 缺失导致的 `insufficient_forward_bars`/`missing_anchor_price` 反复挂起；15:30（沪）前丢弃当日行防止盘中半根 K 线把信号错误定案为 completed，回补失败仅告警不阻断评估，新增 `--skip-bars` 调试开关。
 - [改进] PR CI 增加文档路径检测：仅修改普通文档、非治理 Markdown 或 LICENSE 时跳过后端测试分片、Docker、Web 与桌面打包，保留轻量治理和门禁汇总；契约文档、静态 API 规格与测试 fixture 仍执行后端回归。
 - [修复] Linux/Docker 分享图补齐 Noto CJK 字体与中韩文字体栈，避免 PNG 只显示数字和英文、中文或韩文内容消失。
