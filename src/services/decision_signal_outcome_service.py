@@ -38,6 +38,16 @@ from src.utils.sanitize import sanitize_decision_signal_text
 
 logger = logging.getLogger(__name__)
 
+# [personal patch 2026-10-15] watch 信号方向分类:
+# watch 并非纯多头倾向(历史样本约 1/4 是"等破位/反弹减仓"型看空观察),
+# 直接统一判 not_down 会把"预测破位成功"记成 miss。
+# 分类器两段式:reason(一句话裁决,方向纯度高)优先;reason 无词再看
+# watch_conditions(双向触发梯,天然混合)。仅多头词→not_down,仅空头词→
+# not_up,混合或无关键词→不可判(保持 non_directional,宁可少判不可误判)。
+# 词表刻意保守:只收无歧义裁决词,不收"买入"(会被"不构成买入否决"误伤)。
+_WATCH_BULLISH_TEXT_RE = re.compile(r"企稳|试探|收复|放量阳线|低吸|介入|看多|偏多")
+_WATCH_BEARISH_TEXT_RE = re.compile(r"破位|减仓|派发|离场|清仓|不抄底|规避|看空|偏空")
+
 DECISION_SIGNAL_OUTCOME_ENGINE_VERSION = "decision-signal-v1"
 SUPPORTED_OUTCOME_HORIZONS = {
     "1d": 1,
@@ -550,7 +560,7 @@ class DecisionSignalOutcomeService:
 
     def _evaluate_signal_horizon(self, signal: DecisionSignalRecord, horizon: str) -> Dict[str, Any]:
         base = self._snapshot_fields(signal, horizon)
-        direction = self._direction_for_action(signal.action)
+        direction = self._direction_for_action(signal.action, signal=signal)
         if direction is None:
             return self._unable_fields(base, reason="non_directional_action")
 
@@ -615,13 +625,29 @@ class DecisionSignalOutcomeService:
         }
 
     @staticmethod
-    def _direction_for_action(action: Optional[str]) -> Optional[str]:
+    def _direction_for_action(
+        action: Optional[str],
+        signal: Optional[DecisionSignalRecord] = None,
+    ) -> Optional[str]:
         if action in {"buy", "add"}:
             return "up"
         if action == "hold":
             return "not_down"
         if action in {"reduce", "sell", "avoid"}:
             return "not_up"
+        if action == "watch" and signal is not None:
+            for text in (signal.reason, signal.watch_conditions):
+                if not text:
+                    continue
+                bullish = bool(_WATCH_BULLISH_TEXT_RE.search(text))
+                bearish = bool(_WATCH_BEARISH_TEXT_RE.search(text))
+                if bullish and not bearish:
+                    return "not_down"
+                if bearish and not bullish:
+                    return "not_up"
+                if bullish or bearish:
+                    # 该字段混合表态,继续尝试下一字段
+                    continue
         return None
 
     def _snapshot_fields(self, signal: DecisionSignalRecord, horizon: str) -> Dict[str, Any]:

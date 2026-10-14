@@ -46,6 +46,8 @@ def _add_signal(
     profile_source: str | None = None,
     metadata_data_quality: str | None = None,
     data_quality_summary_json: str | None = '{"level": "good"}',
+    watch_conditions: str | None = None,
+    reason_text: str | None = None,
 ) -> int:
     metadata = {
         "market_phase_summary": {"session_date": session_date},
@@ -69,7 +71,8 @@ def _add_signal(
             action=action,
             action_label=action,
             horizon=horizon,
-            reason="unit test",
+            reason=reason_text or "unit test",
+            watch_conditions=watch_conditions,
             data_quality_summary_json=data_quality_summary_json,
             metadata_json=json.dumps(metadata),
             plan_quality="complete",
@@ -517,6 +520,76 @@ def test_non_directional_persisted_and_intraday_signals_use_daily_windows(isolat
     assert watch_skipped["skipped"] == 1
     assert intraday_skipped["evaluated"] == 0
     assert intraday_skipped["skipped"] == 2
+
+
+def test_watch_direction_classified_by_text_keywords(isolated_db) -> None:
+    # [personal patch 2026-10-15] watch 按文本关键词分类方向:
+    # 仅多头词→not_down;仅空头词→not_up;混合/无关键词→不可判。
+    bullish_id = _add_signal(
+        isolated_db,
+        action="watch",
+        horizon="3d",
+        watch_conditions='["缩量回踩不破前低,出现量比1.5-2.5放量阳线后试探仓介入"]',
+    )
+    bearish_id = _add_signal(
+        isolated_db,
+        code="000002",
+        action="watch",
+        horizon="3d",
+        watch_conditions='["反弹减仓、不抄底,收盘破位则加速离场"]',
+    )
+    mixed_id = _add_signal(
+        isolated_db,
+        code="000003",
+        action="watch",
+        horizon="3d",
+        watch_conditions='["放量收复MA5可试探,跌破前低则减仓"]',
+    )
+    _seed_bars(isolated_db, code="600519", closes=[103, 104, 105])
+    _seed_bars(isolated_db, code="000002", closes=[97, 96, 95])
+    _seed_bars(isolated_db, code="000003", closes=[103, 104, 105])
+    service = DecisionSignalOutcomeService(db_manager=isolated_db)
+
+    bullish = service.run_outcomes(signal_id=bullish_id)["items"][0]
+    bearish = service.run_outcomes(signal_id=bearish_id)["items"][0]
+    mixed = service.run_outcomes(signal_id=mixed_id)["items"][0]
+
+    assert bullish["eval_status"] == "completed"
+    assert bullish["direction_expected"] == "not_down"
+    assert bullish["outcome"] == "hit"
+    assert bearish["eval_status"] == "completed"
+    assert bearish["direction_expected"] == "not_up"
+    assert bearish["outcome"] == "hit"
+    assert mixed["eval_status"] == "unable"
+    assert mixed["unable_reason"] == "non_directional_action"
+
+    # reason 优先于 watch_conditions:裁决纯度更高的字段先判
+    reason_bullish_id = _add_signal(
+        isolated_db,
+        code="000004",
+        action="watch",
+        horizon="3d",
+        reason_text="综合裁决:偏多但需确认,等回踩企稳信号",
+        watch_conditions='["放量收复MA5可试探,跌破前低则减仓离场"]',
+    )
+    reason_bearish_id = _add_signal(
+        isolated_db,
+        code="000005",
+        action="watch",
+        horizon="3d",
+        reason_text="空头未止跌,反弹只减仓不抄底",
+        watch_conditions='["跌破0.875清仓,0.875上方企稳可试探"]',
+    )
+    _seed_bars(isolated_db, code="000004", closes=[103, 104, 105])
+    _seed_bars(isolated_db, code="000005", closes=[97, 96, 95])
+
+    reason_bullish = service.run_outcomes(signal_id=reason_bullish_id)["items"][0]
+    reason_bearish = service.run_outcomes(signal_id=reason_bearish_id)["items"][0]
+
+    assert reason_bullish["eval_status"] == "completed"
+    assert reason_bullish["direction_expected"] == "not_down"
+    assert reason_bearish["eval_status"] == "completed"
+    assert reason_bearish["direction_expected"] == "not_up"
 
 
 def test_watch_and_alert_outcomes_remain_unable_without_market_reads(isolated_db) -> None:
