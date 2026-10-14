@@ -3,12 +3,21 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
+logger = logging.getLogger(__name__)
+
 
 SNIPER_KEYS = ("ideal_buy", "secondary_buy", "stop_loss", "take_profit")
+
+# [personal patch 2026-10-15] 校验哨兵:dashboard 中数组样式/止损目标倒挂的点位
+# 被清洗为该值。"—" 不在 pipeline._is_agent_field_missing 的 placeholder 集合内
+# → 不会触发 support_levels[0] 自动回填;而 parse_sniper_value 将 "—" 映射为
+# None → 落库列自动为 NULL。防回填与 DB 干净一举两得。
+SNIPER_SENTINEL = "—"
 
 
 def parse_sniper_value(value: Any) -> Optional[float]:
@@ -90,7 +99,61 @@ def extract_sniper_points(result: Any) -> Dict[str, Optional[float]]:
         if isinstance(raw_response, Mapping):
             raw_points = find_sniper_points(raw_response) or raw_points
 
-    return {key: parse_sniper_value(raw_points.get(key)) for key in SNIPER_KEYS}
+    return _parse_with_validation(raw_points)
+
+
+def _is_array_style(value: Any) -> bool:
+    """LLM 偶发输出区间数组(如 "[71.7 70.5 68.5]"),取任一端点都是猜测。"""
+
+    if isinstance(value, (list, tuple, set)):
+        return True
+    if isinstance(value, str):
+        return value.strip().startswith("[")
+    return False
+
+
+def _parse_with_validation(raw_points: Mapping[str, Any]) -> Dict[str, Optional[float]]:
+    """带跨字段校验的解析:数组样式与止损≥目标(多头世界倒挂)一律判无效。
+
+    止损==买点不判无效(突破型"贴线止损"合法),仅告警供人工复核。
+    """
+
+    parsed: Dict[str, Optional[float]] = {}
+    for key in SNIPER_KEYS:
+        raw = raw_points.get(key)
+        parsed[key] = None if _is_array_style(raw) else parse_sniper_value(raw)
+
+    stop = parsed.get("stop_loss")
+    target = parsed.get("take_profit")
+    if stop is not None and target is not None and stop >= target:
+        parsed["stop_loss"] = None
+
+    if stop is not None and stop in (parsed.get("ideal_buy"), parsed.get("secondary_buy")):
+        logger.warning(
+            "sniper stop_loss equals entry point (%s); 突破型贴线止损?保留但请人工复核",
+            stop,
+        )
+    return parsed
+
+
+def sanitize_sniper_points_in_place(sniper_points: Any) -> None:
+    """就地清洗 dashboard 的 sniper_points(在 pipeline 兜底之前调用)。
+
+    值非空但解析无效(数组/倒挂)→ SNIPER_SENTINEL:既阻断 support_levels
+    自动回填,又让下游 parse 得到 None。值为空则保持空(真缺失允许兜底)。
+    """
+
+    if not isinstance(sniper_points, Mapping):
+        return
+    parsed = _parse_with_validation(sniper_points)
+    explicit_null_tokens = {"-", "—", "N/A"}
+    for key in SNIPER_KEYS:
+        raw = sniper_points.get(key)
+        if isinstance(raw, str) and raw.strip() in explicit_null_tokens:
+            # LLM 的显式空值(报告常渲染 "N/A"),parse 已映射 None,保持原样
+            continue
+        if parsed.get(key) is None and raw not in (None, ""):
+            sniper_points[key] = SNIPER_SENTINEL
 
 
 def _has_any_sniper_value(points: Mapping[str, Any]) -> bool:

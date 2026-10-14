@@ -52,6 +52,7 @@ from src.report_language import (
 from src.search_service import SearchService
 from src.analysis_context_pack_prompt import format_analysis_context_pack_prompt_section
 from src.analysis_context_pack_overview import render_analysis_context_pack_overview
+from src.utils.sniper_points import sanitize_sniper_points_in_place
 from src.market_phase_summary import MARKET_PHASE_SUMMARY_KEY, render_market_phase_summary
 from src.daily_market_context_guardrail import apply_daily_market_context_guardrail
 from src.agent.final_explanation import (
@@ -2593,6 +2594,13 @@ class StockAnalysisPipeline:
         if not isinstance(result.dashboard, dict):
             result.dashboard = {}
         dashboard = result.dashboard
+
+        # [personal patch 2026-10-15] 点位校验前置:数组样式/止损目标倒挂清洗为
+        # 哨兵"—",防止脏值流入报告或被 support_levels 兜底静默替换。
+        # 见 src/utils/sniper_points.py sanitize_sniper_points_in_place。
+        _battle_plan = dashboard.get("battle_plan")
+        if isinstance(_battle_plan, dict):
+            sanitize_sniper_points_in_place(_battle_plan.get("sniper_points"))
 
         for key in (
             "sentiment_score",
